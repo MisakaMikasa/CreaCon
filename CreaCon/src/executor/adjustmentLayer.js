@@ -1,0 +1,117 @@
+const { app, action, constants } = require("photoshop");
+const { log } = require("../log");
+
+// The UXP document DOM has no createAdjustmentLayer(), so we create adjustment
+// layers via batchPlay's `make` descriptor, baking the AI-provided settings
+// into the `type` object. The settings key names the AI is expected to emit are
+// documented in backend/prompt.py so the two stay in sync.
+//
+// IMPORTANT: these value descriptors are a best-effort reconstruction of
+// Photoshop's batchPlay format. A WRONG descriptor often silently no-ops (layer
+// appears, image unchanged) rather than throwing. If a given adjustment type
+// creates a layer but doesn't change the image, capture the real descriptor by
+// performing that adjustment manually with a descriptor logger (e.g. Alchemist)
+// and correct the matching builder below - the log() call prints exactly what
+// we sent so you can diff it against the recorded one.
+const DEFAULT_PRESET = { _enum: "presetKindType", _value: "presetKindDefault" };
+
+function num(v, fallback) {
+  return typeof v === "number" ? v : fallback;
+}
+
+const BUILDERS = {
+  hueSaturation(s) {
+    return {
+      _obj: "hueSaturation",
+      presetKind: DEFAULT_PRESET,
+      colorize: false,
+      adjustment: [
+        {
+          _obj: "hueSatAdjustmentV2",
+          hue: num(s.hue, 0),
+          saturation: num(s.saturation, 0),
+          lightness: num(s.lightness, 0),
+        },
+      ],
+    };
+  },
+  brightnessContrast(s) {
+    return {
+      _obj: "brightnessEvent",
+      brightness: num(s.brightness, 0),
+      center: num(s.contrast, 0), // "center" is Photoshop's key for contrast
+      useLegacy: false,
+    };
+  },
+  vibrance(s) {
+    return {
+      _obj: "vibrance",
+      vibrance: num(s.vibrance, 0),
+      saturation: num(s.saturation, 0),
+    };
+  },
+  exposure(s) {
+    return {
+      _obj: "exposure",
+      exposure: num(s.exposure, 0),
+      offset: num(s.offset, 0),
+      gammaCorrection: num(s.gamma, 1),
+    };
+  },
+  colorBalance(s) {
+    // Each triple is [red-cyan, green-magenta, blue-yellow], each -100..100.
+    // Warmer = positive red + negative blue (e.g. midtones [15, 0, -15]).
+    return {
+      _obj: "colorBalance",
+      shadowLevels: s.shadows || [0, 0, 0],
+      midtoneLevels: s.midtones || [0, 0, 0],
+      highlightLevels: s.highlights || [0, 0, 0],
+      preserveLuminosity: s.preserveLuminosity !== false,
+    };
+  },
+  curves() {
+    // Curves settings (per-channel point lists) are not mapped yet - creates a
+    // default no-op curves layer. Prefer other adjustment types for now.
+    return { _obj: "curves", presetKind: DEFAULT_PRESET };
+  },
+};
+
+async function createAdjustmentLayer(params) {
+  const { adjustmentType, layerName, settings, groupName } = params;
+
+  const builder = BUILDERS[adjustmentType];
+  if (!builder) {
+    throw new Error(`Unsupported adjustmentType "${adjustmentType}"`);
+  }
+
+  const typeDescriptor = builder(settings || {});
+  const makeDescriptor = {
+    _obj: "make",
+    _target: [{ _ref: "adjustmentLayer" }],
+    using: { _obj: "adjustmentLayer", type: typeDescriptor },
+  };
+
+  log(`createAdjustmentLayer "${layerName}" settings:`, settings);
+  log("batchPlay descriptor:", JSON.stringify(makeDescriptor));
+  const result = await action.batchPlay([makeDescriptor], {});
+  log("batchPlay result:", JSON.stringify(result));
+
+  // The newly created adjustment layer is now the active layer.
+  const layer = app.activeDocument.activeLayers[0];
+  if (layer && layerName) {
+    layer.name = layerName;
+  }
+
+  if (groupName && layer) {
+    const group = app.activeDocument.layers.find(
+      (l) => l.name === groupName && l.kind === constants.LayerKind.GROUP
+    );
+    if (group) {
+      layer.move(group, constants.ElementPlacement.PLACEINSIDE);
+    }
+  }
+
+  return layer;
+}
+
+module.exports = { createAdjustmentLayer };

@@ -1,0 +1,30 @@
+body {
+  color: white;
+  padding: 0 16px;
+}
+
+.hidden {
+  display: none;
+}
+
+#stepList {
+  border: 1px solid #808080;
+  border-radius: 4px;
+  padding: 8px 16px;
+  margin: 8px 0;
+}
+
+#trace {
+  margin-top: 12px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.trace-line {
+  padding: 2px 0;
+}
+
+.trace-error {
+  padding: 2px 0;
+  color: #ff6b6b;
+}

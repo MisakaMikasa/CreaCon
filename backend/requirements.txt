@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+jsonschema
+pydantic
+python-dotenv
+
+# Pick the SDK(s) for the provider(s) you'll actually use (LLM_PROVIDER in .env)
+anthropic
+google-genai

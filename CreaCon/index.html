@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="main.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <sp-heading size="S">CreaCon AI Edit</sp-heading>
+
+  <sp-textarea id="instruction" placeholder="e.g. Make this photo warmer and more cinematic, but keep it natural."></sp-textarea>
+  <sp-button id="btnGenerate" variant="cta">Generate Plan</sp-button>
+
+  <div id="planPreview" class="hidden">
+    <sp-heading size="XS">Proposed edits</sp-heading>
+    <ul id="stepList"></ul>
+    <sp-button id="btnApply" variant="cta">Apply</sp-button>
+    <sp-button id="btnCancel" variant="secondary">Cancel</sp-button>
+  </div>
+
+  <div id="trace"></div>
+</body>
+</html>

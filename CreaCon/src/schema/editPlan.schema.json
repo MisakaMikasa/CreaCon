@@ -1,0 +1,145 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AIEditPlan",
+  "type": "object",
+  "required": ["summary", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "One sentence describing the overall edit, shown to the user before they approve it."
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": { "$ref": "#/definitions/step" }
+    }
+  },
+  "definitions": {
+    "step": {
+      "type": "object",
+      "required": ["op", "description", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "createAdjustmentLayer",
+            "renameLayer",
+            "setLayerOpacity",
+            "createGroup",
+            "addMask"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable summary of this step, shown in the edit trace."
+        },
+        "params": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "op": { "const": "createAdjustmentLayer" } } },
+          "then": {
+            "properties": {
+              "params": {
+                "type": "object",
+                "required": ["adjustmentType", "layerName", "settings"],
+                "additionalProperties": false,
+                "properties": {
+                  "adjustmentType": {
+                    "type": "string",
+                    "enum": [
+                      "hueSaturation",
+                      "curves",
+                      "colorBalance",
+                      "brightnessContrast",
+                      "vibrance",
+                      "exposure"
+                    ]
+                  },
+                  "layerName": { "type": "string" },
+                  "settings": { "type": "object" },
+                  "groupName": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "renameLayer" } } },
+          "then": {
+            "properties": {
+              "params": {
+                "type": "object",
+                "required": ["targetLayer", "newName"],
+                "additionalProperties": false,
+                "properties": {
+                  "targetLayer": { "type": "string" },
+                  "newName": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "setLayerOpacity" } } },
+          "then": {
+            "properties": {
+              "params": {
+                "type": "object",
+                "required": ["targetLayer", "opacity"],
+                "additionalProperties": false,
+                "properties": {
+                  "targetLayer": { "type": "string" },
+                  "opacity": { "type": "number", "minimum": 0, "maximum": 100 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "createGroup" } } },
+          "then": {
+            "properties": {
+              "params": {
+                "type": "object",
+                "required": ["groupName", "layerNames"],
+                "additionalProperties": false,
+                "properties": {
+                  "groupName": { "type": "string" },
+                  "layerNames": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "addMask" } } },
+          "then": {
+            "properties": {
+              "params": {
+                "type": "object",
+                "required": ["targetLayer", "maskType"],
+                "additionalProperties": false,
+                "properties": {
+                  "targetLayer": { "type": "string" },
+                  "maskType": {
+                    "type": "string",
+                    "enum": ["selectSubject", "selectSky", "full", "invert"]
+                  },
+                  "feather": { "type": "number", "minimum": 0, "maximum": 250 }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
