@@ -21,12 +21,20 @@ achieves the user's request.
 - "targetLayer"/"layerName"/"groupName" values should be short, human-readable names \
 (e.g. "AI: Warm Tone"), since they are shown directly in the Photoshop Layers panel and \
 used to look layers up by name in later steps.
+- When an operation targets an EXISTING layer (renameLayer.targetLayer, \
+setLayerOpacity.targetLayer, createGroup.layerNames, addMask.targetLayer), you MUST use a \
+name from the "Existing layers" list given in the user message. Do not guess names like \
+"Layer 1" - if it isn't in that list, it doesn't exist. New layers you create earlier in the \
+same plan can be referenced by the layerName you gave them.
 
 For createAdjustmentLayer, the "settings" object MUST use exactly these keys for each \
 adjustmentType (the executor only understands these). Emit non-zero values so the edit is \
 actually visible - default/zero settings do nothing:
 - brightnessContrast: {{ "brightness": -150..150, "contrast": -50..100 }}
-- hueSaturation:      {{ "hue": -180..180, "saturation": -100..100, "lightness": -100..100 }}
+- hueSaturation:      {{ "hue": -180..180, "saturation": -100..100, "lightness": -100..100, \
+"channel": one of "master"(default)/"reds"/"yellows"/"greens"/"cyans"/"blues"/"magentas" }} \
+- set "channel" to target one color range, e.g. to saturate only the blues use \
+{{ "channel": "blues", "saturation": 40 }}. Omit "channel" (or use "master") to affect all colors.
 - vibrance:           {{ "vibrance": -100..100, "saturation": -100..100 }}
 - exposure:           {{ "exposure": -3..3 (stops), "offset": -0.5..0.5, "gamma": 0.1..9.99 }}
 - colorBalance:       {{ "shadows": [r,g,b], "midtones": [r,g,b], "highlights": [r,g,b] }} \
@@ -39,5 +47,11 @@ To dim part of an image, use a brightnessContrast layer with a negative "brightn
 """
 
 
-def build_user_message(instruction: str) -> str:
-    return f"Editing instruction: {instruction}"
+def build_user_message(instruction: str, layer_names=None) -> str:
+    parts = [f"Editing instruction: {instruction}"]
+    if layer_names:
+        listing = ", ".join(f'"{n}"' for n in layer_names)
+        parts.append(f"Existing layers (top to bottom): {listing}")
+    else:
+        parts.append("Existing layers: (none reported)")
+    return "\n".join(parts)

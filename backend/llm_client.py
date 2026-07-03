@@ -10,7 +10,7 @@ load_dotenv()
 PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic").lower()
 
 
-def request_edit_plan(instruction: str, image_base64: Optional[str] = None) -> dict:
+def request_edit_plan(instruction: str, image_base64: Optional[str] = None, layer_names=None) -> dict:
     """Dispatches to the configured provider. Set LLM_PROVIDER=gemini|anthropic in .env.
 
     Lazily imports the provider module so you only need that provider's SDK
@@ -23,4 +23,4 @@ def request_edit_plan(instruction: str, image_base64: Optional[str] = None) -> d
     else:
         raise ValueError(f"Unknown LLM_PROVIDER '{PROVIDER}' - use 'anthropic' or 'gemini'")
 
-    return impl(instruction, image_base64)
+    return impl(instruction, image_base64, layer_names)

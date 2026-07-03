@@ -29,13 +29,27 @@ function uint8ArrayToBase64(bytes) {
   return btoa(binary);
 }
 
+// The AI needs to know what layers already exist so it references real names
+// (for renameLayer/setLayerOpacity/createGroup/addMask targets) instead of
+// guessing "Layer 1". Top layer first, matching the Layers panel order.
+function currentLayerNames() {
+  try {
+    const { app } = require("photoshop");
+    return app.activeDocument.layers.map((l) => l.name);
+  } catch (err) {
+    console.warn("CreaCon: could not read layer names.", err);
+    return [];
+  }
+}
+
 async function requestEditPlan(instruction) {
   const imageBase64 = await capturePreviewImage();
+  const layerNames = currentLayerNames();
 
   const response = await fetch(BACKEND_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruction, image_base64: imageBase64 }),
+    body: JSON.stringify({ instruction, image_base64: imageBase64, layer_names: layerNames }),
   });
 
   if (!response.ok) {

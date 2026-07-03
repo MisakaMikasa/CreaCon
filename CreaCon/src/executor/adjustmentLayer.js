@@ -19,20 +19,40 @@ function num(v, fallback) {
   return typeof v === "number" ? v : fallback;
 }
 
+// Hue/Saturation can target a specific color range instead of the master.
+// localRange is the range id; the four ramp values are the hue-degree window
+// that defines that color (verified against a Photoshop "Copy as Javascript"
+// recording - blues = localRange 5, ramps 195/225/255/285). Master omits both.
+const HS_CHANNELS = {
+  reds: { localRange: 1, beginRamp: 315, beginSustain: 345, endSustain: 15, endRamp: 45 },
+  yellows: { localRange: 2, beginRamp: 15, beginSustain: 45, endSustain: 75, endRamp: 105 },
+  greens: { localRange: 3, beginRamp: 75, beginSustain: 105, endSustain: 135, endRamp: 165 },
+  cyans: { localRange: 4, beginRamp: 135, beginSustain: 165, endSustain: 195, endRamp: 225 },
+  blues: { localRange: 5, beginRamp: 195, beginSustain: 225, endSustain: 255, endRamp: 285 },
+  magentas: { localRange: 6, beginRamp: 255, beginSustain: 285, endSustain: 315, endRamp: 345 },
+};
+
 const BUILDERS = {
   hueSaturation(s) {
+    const entry = {
+      _obj: "hueSatAdjustmentV2",
+      hue: num(s.hue, 0),
+      saturation: num(s.saturation, 0),
+      lightness: num(s.lightness, 0),
+    };
+    const range = s.channel && HS_CHANNELS[String(s.channel).toLowerCase()];
+    if (range) {
+      entry.localRange = range.localRange;
+      entry.beginRamp = range.beginRamp;
+      entry.beginSustain = range.beginSustain;
+      entry.endSustain = range.endSustain;
+      entry.endRamp = range.endRamp;
+    }
     return {
       _obj: "hueSaturation",
       presetKind: DEFAULT_PRESET,
       colorize: false,
-      adjustment: [
-        {
-          _obj: "hueSatAdjustmentV2",
-          hue: num(s.hue, 0),
-          saturation: num(s.saturation, 0),
-          lightness: num(s.lightness, 0),
-        },
-      ],
+      adjustment: [entry],
     };
   },
   brightnessContrast(s) {
