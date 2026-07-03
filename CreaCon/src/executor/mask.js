@@ -17,6 +17,17 @@ async function addMask(params) {
 
   doc.activeLayers = [layer];
 
+  // Adjustment layers are created WITH a default reveal-all mask, which makes
+  // "add layer mask from selection" unavailable (the -25920 "Make not available"
+  // error). Discard any existing mask first so we can build one from the
+  // selection. If there's no mask, batchPlay returns an error descriptor (not a
+  // throw) and we simply proceed.
+  const deleteResult = await action.batchPlay(
+    [{ _obj: "delete", _target: [{ _ref: "channel", _enum: "channel", _value: "mask" }] }],
+    {}
+  );
+  log("delete existing mask result:", JSON.stringify(deleteResult));
+
   if (maskType === "selectSubject") {
     const r = await action.batchPlay([{ _obj: "autoCutout", sampleAllLayers: false }], {});
     log("autoCutout result:", JSON.stringify(r));
@@ -34,21 +45,33 @@ async function addMask(params) {
     );
   }
 
-  await action.batchPlay(
-    [
-      {
-        _obj: "make",
-        new: { _class: "channel" },
-        at: { _ref: "channel", _enum: "channel", _value: "mask" },
-        using: { _enum: "userMaskEnabled", _value: "revealSelection" },
-      },
-    ],
-    {}
-  );
+  // NOTE: adjustment layers may be created WITH a default reveal-all mask. If so,
+  // this "add layer mask from selection" can be a no-op (a mask already exists),
+  // which would leave the adjustment affecting the whole image. The result/error
+  // logged here tells us whether that's happening.
+  try {
+    const maskResult = await action.batchPlay(
+      [
+        {
+          _obj: "make",
+          new: { _class: "channel" },
+          at: { _ref: "channel", _enum: "channel", _value: "mask" },
+          using: { _enum: "userMaskEnabled", _value: "revealSelection" },
+        },
+      ],
+      {}
+    );
+    log("make mask result:", JSON.stringify(maskResult));
+  } catch (err) {
+    log("make mask FAILED:", err && err.message ? err.message : String(err));
+    throw err;
+  }
 
   if (maskType === "invert") {
     await action.batchPlay([{ _obj: "invert" }], {});
   }
+
+  log(`addMask complete for "${targetLayer}"`);
 }
 
 module.exports = { addMask };
