@@ -6,7 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from jsonschema import ValidationError
 from pydantic import BaseModel
 
-from llm_client import request_edit_plan
+from llm_client import chat, request_edit_plan
+from plan_extract import extract_plan
 from validator import validate_edit_plan
 
 logging.basicConfig(level=logging.INFO)
@@ -52,3 +53,35 @@ def edit_plan(req: EditPlanRequest):
         raise HTTPException(502, f"AI returned an invalid edit plan: {exc.message}")
 
     return plan
+
+
+class ChatMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
+    image_base64: Optional[str] = None
+    layer_names: Optional[List[str]] = None
+    selected_layers: Optional[List[str]] = None
+
+
+@app.post("/chat")
+def chat_endpoint(req: ChatRequest):
+    if not req.messages:
+        raise HTTPException(400, "messages must not be empty")
+
+    context = {"layer_names": req.layer_names, "selected_layers": req.selected_layers}
+    logger.info("chat: %d messages, layer context: %s", len(req.messages), context)
+
+    conversation = [{"role": m.role, "content": m.content} for m in req.messages]
+    reply_text = chat(conversation, req.image_base64, context)
+
+    # If the reply proposes edits (a ```json block), extract + validate them.
+    # An invalid/absent block just yields a plain conversational reply.
+    display, plan = extract_plan(reply_text)
+    if plan is not None and not plan.get("summary"):
+        plan["summary"] = "AI Edit"
+
+    return {"reply": display, "edit_plan": plan}

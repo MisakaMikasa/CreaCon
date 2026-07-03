@@ -25,3 +25,16 @@ def request_edit_plan(instruction: str, image_base64: Optional[str] = None, cont
         raise ValueError(f"Unknown LLM_PROVIDER '{PROVIDER}' - use 'anthropic' or 'gemini'")
 
     return impl(instruction, image_base64, context)
+
+
+def chat(messages: list, image_base64: Optional[str] = None, context: Optional[dict] = None) -> str:
+    """Conversational turn: returns the model's raw text reply (which may embed
+    a ```json edit-plan block). Dispatches to the configured provider."""
+    if PROVIDER == "gemini":
+        from llm_providers.gemini_provider import chat as impl
+    elif PROVIDER == "anthropic":
+        from llm_providers.anthropic_provider import chat as impl
+    else:
+        raise ValueError(f"Unknown LLM_PROVIDER '{PROVIDER}' - use 'anthropic' or 'gemini'")
+
+    return impl(messages, image_base64, context)

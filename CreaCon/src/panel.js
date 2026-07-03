@@ -1,109 +1,173 @@
-const { requestEditPlan } = require("./aiClient");
+const { sendChat } = require("./aiClient");
 const { validateEditPlan } = require("./validator");
 const { applyEditPlan } = require("./executor/index");
 const { log, error, formatError } = require("./log");
 
-let currentPlan = null;
+// Each entry: { role: "user"|"assistant"|"system"|"error", text, plan?, planStatus?, thinking? }
+// role drives bubble styling; plan (if present) renders an Apply/Cancel card.
+const conversation = [];
+let busy = false;
 
-function els() {
-  return {
-    instruction: document.getElementById("instruction"),
-    btnGenerate: document.getElementById("btnGenerate"),
-    planPreview: document.getElementById("planPreview"),
-    stepList: document.getElementById("stepList"),
-    btnApply: document.getElementById("btnApply"),
-    btnCancel: document.getElementById("btnCancel"),
-    trace: document.getElementById("trace"),
-  };
+function el(id) {
+  return document.getElementById(id);
 }
 
-function renderPlanPreview(plan) {
-  const { planPreview, stepList } = els();
-  stepList.innerHTML = plan.steps
-    .map((step) => `<li>${escapeHtml(step.description)}</li>`)
-    .join("");
-  planPreview.classList.remove("hidden");
+// Only user/assistant turns are real conversation for the model. "system" notes
+// (e.g. "Applied ...") are sent as user "[note] ..." so the model knows the
+// document changed; thinking placeholders and errors are display-only.
+function conversationForApi() {
+  return conversation
+    .filter((m) => !m.thinking && m.role !== "error")
+    .map((m) =>
+      m.role === "system"
+        ? { role: "user", content: `[note] ${m.text}` }
+        : { role: m.role, content: m.text }
+    );
 }
 
-function appendTrace(message, isError) {
-  const { trace } = els();
-  const line = document.createElement("div");
-  line.className = isError ? "trace-error" : "trace-line";
-  line.textContent = message;
-  trace.appendChild(line);
+function buildPlanCard(msg, idx) {
+  const card = document.createElement("div");
+  card.className = "plan-card";
+
+  const ul = document.createElement("ul");
+  msg.plan.steps.forEach((step) => {
+    const li = document.createElement("li");
+    li.textContent = step.description;
+    ul.appendChild(li);
+  });
+  card.appendChild(ul);
+
+  if (msg.planStatus === "applied" || msg.planStatus === "cancelled") {
+    const status = document.createElement("div");
+    status.className = "plan-status";
+    status.textContent = msg.planStatus === "applied" ? "✓ Applied" : "Cancelled";
+    card.appendChild(status);
+    return card;
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "plan-actions";
+
+  const applyBtn = document.createElement("sp-button");
+  applyBtn.setAttribute("variant", "cta");
+  applyBtn.textContent = msg.planStatus === "applying" ? "Applying…" : "Apply";
+  if (msg.planStatus === "applying") applyBtn.setAttribute("disabled", "true");
+  applyBtn.addEventListener("click", () => onApply(idx));
+
+  const cancelBtn = document.createElement("sp-button");
+  cancelBtn.setAttribute("variant", "secondary");
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", () => onCancel(idx));
+
+  actions.appendChild(applyBtn);
+  actions.appendChild(cancelBtn);
+  card.appendChild(actions);
+  return card;
 }
 
-function escapeHtml(str) {
-  return str.replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[c]));
+function render() {
+  const container = el("messages");
+  container.innerHTML = "";
+
+  conversation.forEach((msg, idx) => {
+    const bubble = document.createElement("div");
+    if (msg.thinking) {
+      bubble.className = "msg msg-assistant thinking-dots";
+      bubble.textContent = "Thinking";
+    } else {
+      bubble.className = `msg msg-${msg.role}`;
+      bubble.textContent = msg.text;
+    }
+    container.appendChild(bubble);
+
+    if (msg.plan) {
+      container.appendChild(buildPlanCard(msg, idx));
+    }
+  });
+
+  container.scrollTop = container.scrollHeight;
 }
 
-async function onGenerate() {
-  const { instruction, btnGenerate } = els();
-  const text = instruction.value.trim();
-  if (!text) return;
+async function onSend() {
+  const input = el("chatInput");
+  const text = (input.value || "").trim();
+  if (!text || busy) return;
 
-  btnGenerate.disabled = true;
-  appendTrace(`You: ${text}`);
-  log("Requesting edit plan for:", text);
+  input.value = "";
+  conversation.push({ role: "user", text });
+  const thinkingMsg = { role: "assistant", text: "", thinking: true };
+  conversation.push(thinkingMsg);
+  busy = true;
+  render();
 
   try {
-    const plan = await requestEditPlan(text);
-    log("Received plan:", plan);
+    const apiMessages = conversationForApi();
+    log("Sending chat,", apiMessages.length, "messages");
+    const { reply, edit_plan } = await sendChat(apiMessages);
+    log("Reply:", reply, "| plan:", edit_plan ? `${edit_plan.steps.length} steps` : "none");
 
-    const { valid, errors } = validateEditPlan(plan);
-    if (!valid) {
-      error("Plan failed validation:", errors);
-      appendTrace(`Plan failed validation: ${errors.join("; ")}`, true);
-      return;
-    }
-    currentPlan = plan;
-    renderPlanPreview(plan);
+    removeMessage(thinkingMsg);
+    conversation.push({
+      role: "assistant",
+      text: reply || "(no reply)",
+      plan: edit_plan || null,
+    });
   } catch (err) {
-    error("Generate failed:", err);
-    appendTrace(`Error: ${formatError(err)}`, true);
+    error("Chat failed:", err);
+    removeMessage(thinkingMsg);
+    conversation.push({ role: "error", text: `Error: ${formatError(err)}` });
   } finally {
-    btnGenerate.disabled = false;
+    busy = false;
+    render();
   }
 }
 
-async function onApply() {
-  if (!currentPlan) return;
-  const { planPreview, btnApply } = els();
-  btnApply.disabled = true;
-  log("Applying plan with", currentPlan.steps.length, "steps");
+async function onApply(idx) {
+  const msg = conversation[idx];
+  if (!msg || !msg.plan || msg.planStatus) return;
+
+  const { valid, errors } = validateEditPlan(msg.plan);
+  if (!valid) {
+    conversation.push({ role: "error", text: `Plan failed validation: ${errors.join("; ")}` });
+    render();
+    return;
+  }
+
+  msg.planStatus = "applying";
+  render();
 
   try {
-    await applyEditPlan(currentPlan, (index, step) => {
-      log(`Step ${index} done:`, step.op);
-      appendTrace(`✓ ${step.description}`);
-    });
-    log("Plan applied successfully");
+    await applyEditPlan(msg.plan, (i, step) => log(`Step ${i} done:`, step.op));
+    msg.planStatus = "applied";
+    conversation.push({ role: "system", text: `Applied: ${msg.plan.summary || "the edit"}` });
   } catch (err) {
     error("Apply failed:", err);
-    appendTrace(`Error applying edit: ${formatError(err)}`, true);
+    msg.planStatus = undefined; // allow retry
+    conversation.push({ role: "error", text: `Error applying edit: ${formatError(err)}` });
   } finally {
-    btnApply.disabled = false;
-    planPreview.classList.add("hidden");
-    currentPlan = null;
+    render();
   }
 }
 
-function onCancel() {
-  currentPlan = null;
-  els().planPreview.classList.add("hidden");
+function onCancel(idx) {
+  const msg = conversation[idx];
+  if (msg) msg.planStatus = "cancelled";
+  render();
+}
+
+function removeMessage(msg) {
+  const i = conversation.indexOf(msg);
+  if (i !== -1) conversation.splice(i, 1);
 }
 
 function setup() {
-  const { btnGenerate, btnApply, btnCancel } = els();
-  btnGenerate.addEventListener("click", onGenerate);
-  btnApply.addEventListener("click", onApply);
-  btnCancel.addEventListener("click", onCancel);
+  el("btnSend").addEventListener("click", onSend);
+  el("chatInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      onSend();
+    }
+  });
   log("Panel ready");
 }
 

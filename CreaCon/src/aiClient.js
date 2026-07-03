@@ -1,4 +1,4 @@
-const BACKEND_URL = "http://localhost:8000/edit-plan";
+const CHAT_URL = "http://localhost:8000/chat";
 const { log } = require("./log");
 
 // Exports a small JPEG preview of the current document so the backend can
@@ -56,16 +56,19 @@ function readLayerContext() {
   }
 }
 
-async function requestEditPlan(instruction) {
+// Sends the full conversation (array of {role, content}) plus a fresh preview
+// image and layer context. Returns { reply, edit_plan } - edit_plan is null
+// when the assistant just talked and didn't propose edits.
+async function sendChat(messages) {
   const imageBase64 = await capturePreviewImage();
   const layerContext = readLayerContext();
-  log("Layer context ->", JSON.stringify(layerContext));
+  log("Layer context ->", layerContext);
 
-  const response = await fetch(BACKEND_URL, {
+  const response = await fetch(CHAT_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      instruction,
+      messages,
       image_base64: imageBase64,
       layer_names: layerContext.layer_names,
       selected_layers: layerContext.selected_layers,
@@ -80,4 +83,4 @@ async function requestEditPlan(instruction) {
   return response.json();
 }
 
-module.exports = { requestEditPlan };
+module.exports = { sendChat };

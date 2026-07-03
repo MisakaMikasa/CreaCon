@@ -1,30 +1,115 @@
-body {
+html, body {
+  height: 100%;
+  margin: 0;
   color: white;
-  padding: 0 16px;
 }
 
-.hidden {
-  display: none;
+#chat {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+  padding: 8px;
 }
 
-#stepList {
-  border: 1px solid #808080;
-  border-radius: 4px;
-  padding: 8px 16px;
-  margin: 8px 0;
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px;
 }
 
-#trace {
-  margin-top: 12px;
+/* Chat bubbles */
+.msg {
+  max-width: 90%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.msg-user {
+  align-self: flex-end;
+  background: #2f6fed;
+  color: white;
+}
+
+.msg-assistant {
+  align-self: flex-start;
+  background: #3a3a3a;
+}
+
+/* System notes (e.g. "Applied ...") - centered, muted */
+.msg-system {
+  align-self: center;
+  background: transparent;
+  color: #9a9a9a;
   font-size: 12px;
-  opacity: 0.85;
+  font-style: italic;
+  padding: 2px 8px;
 }
 
-.trace-line {
-  padding: 2px 0;
+.msg-error {
+  align-self: flex-start;
+  background: #5a2222;
+  color: #ffd7d7;
 }
 
-.trace-error {
-  padding: 2px 0;
-  color: #ff6b6b;
+/* Thinking indicator */
+.thinking-dots::after {
+  content: '';
+  animation: dots 1.2s steps(4, end) infinite;
+}
+@keyframes dots {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+}
+
+/* Plan card */
+.plan-card {
+  align-self: flex-start;
+  max-width: 90%;
+  background: #2b2b2b;
+  border: 1px solid #555;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.plan-card ul {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.plan-card li {
+  margin-bottom: 3px;
+}
+
+.plan-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.plan-status {
+  font-size: 12px;
+  color: #9a9a9a;
+  font-style: italic;
+}
+
+/* Input row */
+#inputRow {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  padding-top: 8px;
+}
+
+#chatInput {
+  flex: 1;
 }
