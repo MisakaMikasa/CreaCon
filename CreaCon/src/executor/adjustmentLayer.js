@@ -32,28 +32,30 @@ const HS_CHANNELS = {
   magentas: { localRange: 6, beginRamp: 255, beginSustain: 285, endSustain: 315, endRamp: 345 },
 };
 
+function hueSatEntry(s) {
+  const entry = {
+    _obj: "hueSatAdjustmentV2",
+    hue: num(s.hue, 0),
+    saturation: num(s.saturation, 0),
+    lightness: num(s.lightness, 0),
+  };
+  const range = s.channel && HS_CHANNELS[String(s.channel).toLowerCase()];
+  if (range) {
+    entry.localRange = range.localRange;
+    entry.beginRamp = range.beginRamp;
+    entry.beginSustain = range.beginSustain;
+    entry.endSustain = range.endSustain;
+    entry.endRamp = range.endRamp;
+  }
+  return entry;
+}
+
 const BUILDERS = {
-  hueSaturation(s) {
-    const entry = {
-      _obj: "hueSatAdjustmentV2",
-      hue: num(s.hue, 0),
-      saturation: num(s.saturation, 0),
-      lightness: num(s.lightness, 0),
-    };
-    const range = s.channel && HS_CHANNELS[String(s.channel).toLowerCase()];
-    if (range) {
-      entry.localRange = range.localRange;
-      entry.beginRamp = range.beginRamp;
-      entry.beginSustain = range.beginSustain;
-      entry.endSustain = range.endSustain;
-      entry.endRamp = range.endRamp;
-    }
-    return {
-      _obj: "hueSaturation",
-      presetKind: DEFAULT_PRESET,
-      colorize: false,
-      adjustment: [entry],
-    };
+  hueSaturation() {
+    // Create a plain default layer here; the real values are applied by a
+    // follow-up `set` in createAdjustmentLayer. Baking values into the `make`
+    // call selects the color range but does NOT apply the value (verified).
+    return { _obj: "hueSaturation", presetKind: DEFAULT_PRESET };
   },
   brightnessContrast(s) {
     return {
@@ -120,6 +122,19 @@ async function createAdjustmentLayer(params) {
   const layer = app.activeDocument.activeLayers[0];
   if (layer && layerName) {
     layer.name = layerName;
+  }
+
+  // Hue/Saturation values must be applied via a `set` on the now-existing
+  // layer (create-then-set), matching the verified batchPlay descriptor.
+  if (adjustmentType === "hueSaturation") {
+    const setDescriptor = {
+      _obj: "set",
+      _target: [{ _ref: "adjustmentLayer", _enum: "ordinal", _value: "targetEnum" }],
+      to: { _obj: "hueSaturation", adjustment: [hueSatEntry(settings || {})] },
+    };
+    log("hueSaturation set descriptor:", JSON.stringify(setDescriptor));
+    const setResult = await action.batchPlay([setDescriptor], {});
+    log("hueSaturation set result:", JSON.stringify(setResult));
   }
 
   if (groupName && layer) {

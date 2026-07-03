@@ -11,7 +11,9 @@ async function createGroup(params) {
     throw new Error(`None of the layers [${layerNames.join(", ")}] were found`);
   }
 
-  return doc.createLayerGroup({ name: groupName, layers });
+  // The option that moves existing layers into the group is `fromLayers`.
+  // Passing `layers` is silently ignored and creates an empty group.
+  return doc.createLayerGroup({ name: groupName, fromLayers: layers });
 }
 
 module.exports = { createGroup };

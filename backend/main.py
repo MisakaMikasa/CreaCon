@@ -27,6 +27,7 @@ class EditPlanRequest(BaseModel):
     instruction: str
     image_base64: Optional[str] = None
     layer_names: Optional[List[str]] = None
+    selected_layers: Optional[List[str]] = None
 
 
 @app.post("/edit-plan")
@@ -34,7 +35,9 @@ def edit_plan(req: EditPlanRequest):
     if not req.instruction.strip():
         raise HTTPException(400, "instruction must not be empty")
 
-    plan = request_edit_plan(req.instruction, req.image_base64, req.layer_names)
+    context = {"layer_names": req.layer_names, "selected_layers": req.selected_layers}
+    logger.info("layer context: %s", context)
+    plan = request_edit_plan(req.instruction, req.image_base64, context)
 
     # `summary` is required by the schema but is only a cosmetic label (shown
     # before Apply, and used as the undo name). Gemini occasionally omits it -

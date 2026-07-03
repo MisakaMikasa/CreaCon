@@ -13,7 +13,7 @@ MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
 _client = anthropic.Anthropic()
 
 
-def request_edit_plan(instruction: str, image_base64: Optional[str] = None, layer_names=None) -> dict:
+def request_edit_plan(instruction: str, image_base64: Optional[str] = None, context: Optional[dict] = None) -> dict:
     content: list = []
     if image_base64:
         content.append(
@@ -22,7 +22,7 @@ def request_edit_plan(instruction: str, image_base64: Optional[str] = None, laye
                 "source": {"type": "base64", "media_type": "image/jpeg", "data": image_base64},
             }
         )
-    content.append({"type": "text", "text": build_user_message(instruction, layer_names)})
+    content.append({"type": "text", "text": build_user_message(instruction, context)})
 
     response = _client.messages.create(
         model=MODEL,

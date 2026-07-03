@@ -47,11 +47,24 @@ To dim part of an image, use a brightnessContrast layer with a negative "brightn
 """
 
 
-def build_user_message(instruction: str, layer_names=None) -> str:
+def build_user_message(instruction: str, context=None) -> str:
+    context = context or {}
+    layer_names = context.get("layer_names")
+    selected_layers = context.get("selected_layers")
+
     parts = [f"Editing instruction: {instruction}"]
     if layer_names:
         listing = ", ".join(f'"{n}"' for n in layer_names)
         parts.append(f"Existing layers (top to bottom): {listing}")
     else:
         parts.append("Existing layers: (none reported)")
+
+    if selected_layers:
+        sel = ", ".join(f'"{n}"' for n in selected_layers)
+        parts.append(
+            f"Currently selected layer(s): {sel}. "
+            "If the instruction refers to a target vaguely (e.g. 'this layer', 'the "
+            "selected layer', 'it', or an unnamed 'the photo'), operate on the selected "
+            "layer(s) above."
+        )
     return "\n".join(parts)

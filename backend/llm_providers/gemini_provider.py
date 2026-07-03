@@ -22,11 +22,11 @@ _client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 # enforcement afterward (the same check the Anthropic path goes through). That
 # keeps the real rules in one place - schema/editPlan.schema.json - regardless
 # of which model produced the plan.
-def request_edit_plan(instruction: str, image_base64: Optional[str] = None, layer_names=None) -> dict:
+def request_edit_plan(instruction: str, image_base64: Optional[str] = None, context: Optional[dict] = None) -> dict:
     parts = []
     if image_base64:
         parts.append(types.Part.from_bytes(data=base64.b64decode(image_base64), mime_type="image/jpeg"))
-    parts.append(types.Part.from_text(text=build_user_message(instruction, layer_names)))
+    parts.append(types.Part.from_text(text=build_user_message(instruction, context)))
 
     response = _client.models.generate_content(
         model=MODEL,

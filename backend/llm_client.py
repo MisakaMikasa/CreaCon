@@ -10,9 +10,10 @@ load_dotenv()
 PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic").lower()
 
 
-def request_edit_plan(instruction: str, image_base64: Optional[str] = None, layer_names=None) -> dict:
+def request_edit_plan(instruction: str, image_base64: Optional[str] = None, context: Optional[dict] = None) -> dict:
     """Dispatches to the configured provider. Set LLM_PROVIDER=gemini|anthropic in .env.
 
+    `context` carries document info for the prompt (layer_names, selected_layers).
     Lazily imports the provider module so you only need that provider's SDK
     installed (anthropic vs google-genai), not both.
     """
@@ -23,4 +24,4 @@ def request_edit_plan(instruction: str, image_base64: Optional[str] = None, laye
     else:
         raise ValueError(f"Unknown LLM_PROVIDER '{PROVIDER}' - use 'anthropic' or 'gemini'")
 
-    return impl(instruction, image_base64, layer_names)
+    return impl(instruction, image_base64, context)
