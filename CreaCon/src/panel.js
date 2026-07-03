@@ -8,6 +8,26 @@ const { log, error, formatError } = require("./log");
 const conversation = [];
 let busy = false;
 
+// JS-driven "Thinking…" animation (UXP doesn't reliably animate CSS ::after).
+let thinkingTimer = null;
+let thinkingDots = 0;
+
+function startThinking() {
+  thinkingDots = 0;
+  stopThinking();
+  thinkingTimer = setInterval(() => {
+    thinkingDots = (thinkingDots + 1) % 4;
+    render();
+  }, 400);
+}
+
+function stopThinking() {
+  if (thinkingTimer) {
+    clearInterval(thinkingTimer);
+    thinkingTimer = null;
+  }
+}
+
 function el(id) {
   return document.getElementById(id);
 }
@@ -70,15 +90,21 @@ function render() {
   container.innerHTML = "";
 
   conversation.forEach((msg, idx) => {
+    const roleClass = msg.thinking ? "assistant" : msg.role;
+
+    const row = document.createElement("div");
+    row.className = `row row-${roleClass}`;
+
     const bubble = document.createElement("div");
     if (msg.thinking) {
-      bubble.className = "msg msg-assistant thinking-dots";
-      bubble.textContent = "Thinking";
+      bubble.className = "bubble bubble-thinking";
+      bubble.textContent = "Thinking" + ".".repeat(thinkingDots);
     } else {
-      bubble.className = `msg msg-${msg.role}`;
+      bubble.className = `bubble bubble-${msg.role}`;
       bubble.textContent = msg.text;
     }
-    container.appendChild(bubble);
+    row.appendChild(bubble);
+    container.appendChild(row);
 
     if (msg.plan) {
       container.appendChild(buildPlanCard(msg, idx));
@@ -98,6 +124,7 @@ async function onSend() {
   const thinkingMsg = { role: "assistant", text: "", thinking: true };
   conversation.push(thinkingMsg);
   busy = true;
+  startThinking();
   render();
 
   try {
@@ -118,6 +145,7 @@ async function onSend() {
     conversation.push({ role: "error", text: `Error: ${formatError(err)}` });
   } finally {
     busy = false;
+    stopThinking();
     render();
   }
 }

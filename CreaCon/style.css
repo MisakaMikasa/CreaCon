@@ -1,115 +1,119 @@
+* {
+  box-sizing: border-box;
+}
+
 html, body {
   height: 100%;
   margin: 0;
-  color: white;
+  padding: 0;
+  color: #e8e8e8;
 }
 
 #chat {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  box-sizing: border-box;
+  height: 100%;
   padding: 8px;
 }
 
 #messages {
   flex: 1;
+  min-height: 0; /* required so the flex child can scroll in UXP */
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 4px;
+  padding: 2px;
 }
 
-/* Chat bubbles */
-.msg {
-  max-width: 90%;
+/* Each message is a full-width row; the bubble aligns inside it.
+   (Row + justify-content is more reliable in UXP than align-self.) */
+.row {
+  display: flex;
+  margin-bottom: 8px;
+}
+.row-user {
+  justify-content: flex-end;
+}
+.row-assistant,
+.row-error {
+  justify-content: flex-start;
+}
+.row-system {
+  justify-content: center;
+}
+
+.bubble {
+  max-width: 85%;
   padding: 8px 10px;
   border-radius: 10px;
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.45;
   white-space: pre-wrap;
   word-wrap: break-word;
+  overflow-wrap: break-word;
 }
-
-.msg-user {
-  align-self: flex-end;
+.bubble-user {
   background: #2f6fed;
-  color: white;
+  color: #ffffff;
 }
-
-.msg-assistant {
-  align-self: flex-start;
+.bubble-assistant,
+.bubble-thinking {
   background: #3a3a3a;
+  color: #e8e8e8;
 }
-
-/* System notes (e.g. "Applied ...") - centered, muted */
-.msg-system {
-  align-self: center;
+.bubble-thinking {
+  color: #9a9a9a;
+  font-style: italic;
+}
+.bubble-system {
   background: transparent;
   color: #9a9a9a;
   font-size: 12px;
   font-style: italic;
-  padding: 2px 8px;
 }
-
-.msg-error {
-  align-self: flex-start;
+.bubble-error {
   background: #5a2222;
   color: #ffd7d7;
 }
 
-/* Thinking indicator */
-.thinking-dots::after {
-  content: '';
-  animation: dots 1.2s steps(4, end) infinite;
-}
-@keyframes dots {
-  0% { content: ''; }
-  25% { content: '.'; }
-  50% { content: '..'; }
-  75% { content: '...'; }
-}
-
-/* Plan card */
+/* Plan card - a block element, left-aligned by default */
 .plan-card {
-  align-self: flex-start;
-  max-width: 90%;
+  max-width: 85%;
+  margin-bottom: 8px;
   background: #2b2b2b;
   border: 1px solid #555;
   border-radius: 10px;
   padding: 10px;
 }
-
 .plan-card ul {
-  margin: 4px 0 8px;
+  margin: 0 0 8px;
   padding-left: 18px;
   font-size: 12px;
 }
-
 .plan-card li {
-  margin-bottom: 3px;
+  margin-bottom: 4px;
 }
-
 .plan-actions {
   display: flex;
-  gap: 6px;
 }
-
+.plan-actions sp-button {
+  margin-right: 6px;
+}
 .plan-status {
   font-size: 12px;
   color: #9a9a9a;
   font-style: italic;
 }
 
-/* Input row */
+/* Input row pinned at the bottom */
 #inputRow {
   display: flex;
-  gap: 6px;
   align-items: flex-end;
   padding-top: 8px;
 }
-
 #chatInput {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0; /* lets the textarea shrink so the button isn't pushed off-edge */
+  margin-right: 6px;
+}
+#btnSend {
+  flex: 0 0 auto;
 }
