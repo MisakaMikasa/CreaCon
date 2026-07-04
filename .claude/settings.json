@@ -3,7 +3,10 @@
     "allow": [
       "Bash(node --check src/executor/group.js)",
       "Bash(python -c \"import json; json.load\\(open\\('schema/editPlan.schema.json'\\)\\); json.load\\(open\\('CreaCon/src/schema/editPlan.schema.json'\\)\\); print\\('both JSON schemas OK'\\)\")",
-      "Bash(./.venv/Scripts/python.exe -c \"from anthropic.types import ToolParam; print\\('ToolParam import OK'\\)\")"
+      "Bash(./.venv/Scripts/python.exe -c \"from anthropic.types import ToolParam; print\\('ToolParam import OK'\\)\")",
+      "Bash(python -c \"import json; json.load\\(open\\('schema/editPlan.schema.json'\\)\\); print\\('schema valid'\\)\")",
+      "Bash(python -c \"import json; json.load\\(open\\('schema/editPlan.schema.json'\\)\\); print\\('valid'\\)\")",
+      "Bash(python -m py_compile prompt.py)"
     ]
   }
 }

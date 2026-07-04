@@ -1,18 +1,11 @@
 const { app, action, constants } = require("photoshop");
 const { log } = require("../log");
+const { findLayerByName } = require("./util");
 
 // The UXP document DOM has no createAdjustmentLayer(), so we create adjustment
 // layers via batchPlay's `make` descriptor, baking the AI-provided settings
 // into the `type` object. The settings key names the AI is expected to emit are
 // documented in backend/prompt.py so the two stay in sync.
-//
-// IMPORTANT: these value descriptors are a best-effort reconstruction of
-// Photoshop's batchPlay format. A WRONG descriptor often silently no-ops (layer
-// appears, image unchanged) rather than throwing. If a given adjustment type
-// creates a layer but doesn't change the image, capture the real descriptor by
-// performing that adjustment manually with a descriptor logger (e.g. Alchemist)
-// and correct the matching builder below - the log() call prints exactly what
-// we sent so you can diff it against the recorded one.
 const DEFAULT_PRESET = { _enum: "presetKindType", _value: "presetKindDefault" };
 
 function num(v, fallback) {
@@ -20,9 +13,6 @@ function num(v, fallback) {
 }
 
 // Hue/Saturation can target a specific color range instead of the master.
-// localRange is the range id; the four ramp values are the hue-degree window
-// that defines that color (verified against a Photoshop "Copy as Javascript"
-// recording - blues = localRange 5, ramps 195/225/255/285). Master omits both.
 const HS_CHANNELS = {
   reds: { localRange: 1, beginRamp: 315, beginSustain: 345, endSustain: 15, endRamp: 45 },
   yellows: { localRange: 2, beginRamp: 15, beginSustain: 45, endSustain: 75, endRamp: 105 },
@@ -50,11 +40,42 @@ function hueSatEntry(s) {
   return entry;
 }
 
+const CURVE_CHANNELS = {
+  composite: "composite",
+  rgb: "composite",
+  red: "red",
+  green: "grain", // Photoshop's internal name for the green channel
+  blue: "blue",
+};
+
+function curvesTo(settings) {
+  const points =
+    Array.isArray(settings.points) && settings.points.length >= 2
+      ? settings.points
+      : [[0, 0], [255, 255]];
+  const channel =
+    CURVE_CHANNELS[String(settings.channel || "composite").toLowerCase()] || "composite";
+  return {
+    _obj: "curves",
+    adjustment: [
+      {
+        _obj: "curvesAdjustment",
+        channel: { _ref: "channel", _enum: "channel", _value: channel },
+        curve: points.map(([input, output]) => ({
+          _obj: "point",
+          horizontal: input,
+          vertical: output,
+        })),
+      },
+    ],
+  };
+}
+
+// `type` descriptors baked into the `make` call (these apply directly on create).
 const BUILDERS = {
   hueSaturation() {
-    // Create a plain default layer here; the real values are applied by a
-    // follow-up `set` in createAdjustmentLayer. Baking values into the `make`
-    // call selects the color range but does NOT apply the value (verified).
+    // Values are applied by a follow-up `set` (baking into make selects the
+    // color range but doesn't apply the value).
     return { _obj: "hueSaturation", presetKind: DEFAULT_PRESET };
   },
   brightnessContrast(s) {
@@ -81,8 +102,6 @@ const BUILDERS = {
     };
   },
   colorBalance(s) {
-    // Each triple is [red-cyan, green-magenta, blue-yellow], each -100..100.
-    // Warmer = positive red + negative blue (e.g. midtones [15, 0, -15]).
     return {
       _obj: "colorBalance",
       shadowLevels: s.shadows || [0, 0, 0],
@@ -92,11 +111,41 @@ const BUILDERS = {
     };
   },
   curves() {
-    // Curves settings (per-channel point lists) are not mapped yet - creates a
-    // default no-op curves layer. Prefer other adjustment types for now.
+    // Points applied by a follow-up `set`.
     return { _obj: "curves", presetKind: DEFAULT_PRESET };
   },
 };
+
+// hueSaturation and curves can't have their values baked into `make` - they need
+// a follow-up `set` (used both after create and for updateAdjustmentLayer).
+const NEEDS_SET = new Set(["hueSaturation", "curves"]);
+
+// Returns the `to` object for a `set adjustmentLayer` descriptor - i.e. how the
+// layer's values are (re)applied. Shared by create's post-set and update.
+function buildAdjustmentTo(adjustmentType, settings) {
+  if (adjustmentType === "hueSaturation") {
+    return { _obj: "hueSaturation", adjustment: [hueSatEntry(settings)] };
+  }
+  if (adjustmentType === "curves") {
+    return curvesTo(settings);
+  }
+  const builder = BUILDERS[adjustmentType];
+  if (!builder) {
+    throw new Error(`Unsupported adjustmentType "${adjustmentType}"`);
+  }
+  return builder(settings);
+}
+
+async function applySet(adjustmentType, settings) {
+  const setDescriptor = {
+    _obj: "set",
+    _target: [{ _ref: "adjustmentLayer", _enum: "ordinal", _value: "targetEnum" }],
+    to: buildAdjustmentTo(adjustmentType, settings),
+  };
+  log(`${adjustmentType} set descriptor:`, JSON.stringify(setDescriptor));
+  const result = await action.batchPlay([setDescriptor], {});
+  log(`${adjustmentType} set result:`, JSON.stringify(result));
+}
 
 async function createAdjustmentLayer(params) {
   const { adjustmentType, layerName, settings, groupName } = params;
@@ -106,11 +155,10 @@ async function createAdjustmentLayer(params) {
     throw new Error(`Unsupported adjustmentType "${adjustmentType}"`);
   }
 
-  const typeDescriptor = builder(settings || {});
   const makeDescriptor = {
     _obj: "make",
     _target: [{ _ref: "adjustmentLayer" }],
-    using: { _obj: "adjustmentLayer", type: typeDescriptor },
+    using: { _obj: "adjustmentLayer", type: builder(settings || {}) },
   };
 
   log(`createAdjustmentLayer "${layerName}" settings:`, settings);
@@ -118,23 +166,14 @@ async function createAdjustmentLayer(params) {
   const result = await action.batchPlay([makeDescriptor], {});
   log("batchPlay result:", JSON.stringify(result));
 
-  // The newly created adjustment layer is now the active layer.
   const layer = app.activeDocument.activeLayers[0];
   if (layer && layerName) {
     layer.name = layerName;
   }
 
-  // Hue/Saturation values must be applied via a `set` on the now-existing
-  // layer (create-then-set), matching the verified batchPlay descriptor.
-  if (adjustmentType === "hueSaturation") {
-    const setDescriptor = {
-      _obj: "set",
-      _target: [{ _ref: "adjustmentLayer", _enum: "ordinal", _value: "targetEnum" }],
-      to: { _obj: "hueSaturation", adjustment: [hueSatEntry(settings || {})] },
-    };
-    log("hueSaturation set descriptor:", JSON.stringify(setDescriptor));
-    const setResult = await action.batchPlay([setDescriptor], {});
-    log("hueSaturation set result:", JSON.stringify(setResult));
+  // Types whose values couldn't be baked into `make` get a follow-up `set`.
+  if (NEEDS_SET.has(adjustmentType)) {
+    await applySet(adjustmentType, settings || {});
   }
 
   if (groupName && layer) {
@@ -149,4 +188,15 @@ async function createAdjustmentLayer(params) {
   return layer;
 }
 
-module.exports = { createAdjustmentLayer };
+// Modifies an EXISTING adjustment layer's values in place, instead of stacking a
+// new duplicate. Used when the user asks to refine/tweak a previous adjustment.
+async function updateAdjustmentLayer(params) {
+  const { targetLayer, adjustmentType, settings } = params;
+  const layer = findLayerByName(targetLayer);
+  app.activeDocument.activeLayers = [layer];
+  log(`updateAdjustmentLayer "${targetLayer}" (${adjustmentType}) settings:`, settings);
+  await applySet(adjustmentType, settings || {});
+  return layer;
+}
+
+module.exports = { createAdjustmentLayer, updateAdjustmentLayer };

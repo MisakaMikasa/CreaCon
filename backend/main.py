@@ -55,6 +55,32 @@ def edit_plan(req: EditPlanRequest):
     return plan
 
 
+FORMAT_REMINDER = (
+    "Your previous reply looks like it contained an edit plan, but it couldn't be used - "
+    '{error}. Reply again with the corrected plan as a single fenced ```json code block that '
+    'exactly matches the schema (top-level "summary" and "steps"; each step has "op", '
+    '"description", and "params"; use only the allowed ops, enums, and settings keys). '
+    "Close the code fence with ```."
+)
+
+
+def _call_chat(conversation, image_base64, context):
+    """Calls the provider, converting provider errors into clean HTTP responses."""
+    try:
+        return chat(conversation, image_base64, context)
+    except Exception as exc:  # provider/network errors - clean message, not a 500 traceback
+        msg = str(exc)
+        logger.warning("chat provider error: %s", msg)
+        lowered = msg.lower()
+        if "429" in msg or "resource_exhausted" in lowered or "quota" in lowered or "rate limit" in lowered:
+            raise HTTPException(
+                429,
+                "AI provider rate limit reached (Gemini free tier is ~20 requests/day). "
+                "Wait for the quota to reset, upgrade your plan, or switch LLM_PROVIDER in .env.",
+            )
+        raise HTTPException(502, f"AI request failed: {msg[:300]}")
+
+
 class ChatMessage(BaseModel):
     role: str  # "user" or "assistant"
     content: str
@@ -76,11 +102,29 @@ def chat_endpoint(req: ChatRequest):
     logger.info("chat: %d messages, layer context: %s", len(req.messages), context)
 
     conversation = [{"role": m.role, "content": m.content} for m in req.messages]
-    reply_text = chat(conversation, req.image_base64, context)
 
-    # If the reply proposes edits (a ```json block), extract + validate them.
-    # An invalid/absent block just yields a plain conversational reply.
-    display, plan = extract_plan(reply_text)
+    reply_text = _call_chat(conversation, req.image_base64, context)
+    display, plan, err = extract_plan(reply_text)
+
+    # Single corrective retry: only when the model clearly attempted a plan but
+    # it was invalid (err is set). Never retry plain conversation, and never more
+    # than once, so we can't loop. No image on the retry - it's only a reformat.
+    if plan is None and err is not None:
+        logger.info("plan invalid (%s); retrying once with a format reminder", err)
+        retry_conversation = conversation + [
+            {"role": "assistant", "content": reply_text},
+            {"role": "user", "content": FORMAT_REMINDER.format(error=err)},
+        ]
+        try:
+            retry_text = chat(retry_conversation, None, context)
+        except Exception as exc:
+            logger.warning("retry attempt failed, keeping original reply: %s", exc)
+            retry_text = None
+        if retry_text:
+            retry_display, retry_plan, _ = extract_plan(retry_text)
+            if retry_plan is not None:
+                display, plan = retry_display, retry_plan
+
     if plan is not None and not plan.get("summary"):
         plan["summary"] = "AI Edit"
 

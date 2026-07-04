@@ -1,10 +1,13 @@
 const { app } = require("photoshop");
+const { searchLayers } = require("./util");
 
 async function createGroup(params) {
   const { groupName, layerNames } = params;
   const doc = app.activeDocument;
+  // Search the whole tree, not just top level - layers created while a layer
+  // inside a group was active end up nested inside that group.
   const layers = layerNames
-    .map((name) => doc.layers.find((l) => l.name === name))
+    .map((name) => searchLayers(doc.layers, name))
     .filter(Boolean);
 
   if (layers.length === 0) {

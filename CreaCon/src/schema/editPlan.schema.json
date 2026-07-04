@@ -26,10 +26,12 @@
           "type": "string",
           "enum": [
             "createAdjustmentLayer",
+            "updateAdjustmentLayer",
             "renameLayer",
             "setLayerOpacity",
             "createGroup",
-            "addMask"
+            "addMask",
+            "setBlendMode"
           ]
         },
         "description": {
@@ -62,6 +64,33 @@
                   "layerName": { "type": "string" },
                   "settings": { "type": "object" },
                   "groupName": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "updateAdjustmentLayer" } } },
+          "then": {
+            "properties": {
+              "params": {
+                "type": "object",
+                "required": ["targetLayer", "adjustmentType", "settings"],
+                "additionalProperties": false,
+                "properties": {
+                  "targetLayer": { "type": "string" },
+                  "adjustmentType": {
+                    "type": "string",
+                    "enum": [
+                      "hueSaturation",
+                      "curves",
+                      "colorBalance",
+                      "brightnessContrast",
+                      "vibrance",
+                      "exposure"
+                    ]
+                  },
+                  "settings": { "type": "object" }
                 }
               }
             }
@@ -131,9 +160,89 @@
                   "targetLayer": { "type": "string" },
                   "maskType": {
                     "type": "string",
-                    "enum": ["selectSubject", "selectSky", "full", "invert"]
+                    "enum": [
+                      "selectSubject",
+                      "selectSky",
+                      "full",
+                      "invert",
+                      "linearGradient",
+                      "radialGradient"
+                    ]
                   },
-                  "feather": { "type": "number", "minimum": 0, "maximum": 250 }
+                  "feather": { "type": "number", "minimum": 0, "maximum": 250 },
+                  "direction": {
+                    "type": "string",
+                    "enum": ["left", "right", "top", "bottom"],
+                    "description": "For linearGradient: which edge the effect is strongest at (fades to none at the opposite edge). Use this for simple horizontal/vertical fades."
+                  },
+                  "angle": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 360,
+                    "description": "For linearGradient: the direction the effect is strongest, in degrees (0=right, 90=bottom, 180=left, 270=top; diagonals: 225=top-left, 315=top-right, 45=bottom-right, 135=bottom-left). Use this instead of 'direction' for diagonal fades. Ignored for radialGradient (a circle is symmetric)."
+                  },
+                  "region": {
+                    "type": "string",
+                    "enum": ["center", "edges"],
+                    "description": "For radialGradient: whether the effect is strongest in the center (fading outward) or at the edges (a vignette)."
+                  },
+                  "center": {
+                    "type": "array",
+                    "items": { "type": "number", "minimum": 0, "maximum": 1 },
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "description": "For radialGradient: focal point as [x, y] fractions of the image (0,0 = top-left, 1,1 = bottom-right). Default [0.5, 0.5]. Estimate the subject's position from the preview image."
+                  },
+                  "size": {
+                    "type": "number",
+                    "minimum": 0.05,
+                    "maximum": 1,
+                    "description": "Gradient extent/scale as a fraction of the image. For linearGradient: how far the fade reaches from the effect edge (1 = full width, 0.25 = only the near 25% is affected, untouched beyond). For radialGradient: the radius (larger = bigger area). Default 1 for linear, ~0.5 for radial."
+                  },
+                  "strength": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "description": "For gradient masks: how strong the effect is at its peak (100 = full effect, lower = subtler). Default 100."
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "setBlendMode" } } },
+          "then": {
+            "properties": {
+              "params": {
+                "type": "object",
+                "required": ["targetLayer", "blendMode"],
+                "additionalProperties": false,
+                "properties": {
+                  "targetLayer": { "type": "string" },
+                  "blendMode": {
+                    "type": "string",
+                    "enum": [
+                      "normal",
+                      "multiply",
+                      "screen",
+                      "overlay",
+                      "softLight",
+                      "hardLight",
+                      "colorDodge",
+                      "colorBurn",
+                      "linearDodge",
+                      "linearBurn",
+                      "darken",
+                      "lighten",
+                      "difference",
+                      "exclusion",
+                      "hue",
+                      "saturation",
+                      "color",
+                      "luminosity"
+                    ]
+                  }
                 }
               }
             }

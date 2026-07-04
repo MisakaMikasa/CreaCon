@@ -1,17 +1,20 @@
 const { core } = require("photoshop");
 const { log, error, formatError } = require("../log");
-const { createAdjustmentLayer } = require("./adjustmentLayer");
+const { createAdjustmentLayer, updateAdjustmentLayer } = require("./adjustmentLayer");
 const { renameLayer } = require("./renameLayer");
 const { setLayerOpacity } = require("./opacity");
 const { createGroup } = require("./group");
 const { addMask } = require("./mask");
+const { setBlendMode } = require("./setBlendMode");
 
 const HANDLERS = {
   createAdjustmentLayer,
+  updateAdjustmentLayer,
   renameLayer,
   setLayerOpacity,
   createGroup,
   addMask,
+  setBlendMode,
 };
 
 // Stagger steps so the user can watch each layer/mask appear one at a time,
