@@ -42,14 +42,21 @@ function uint8ArrayToBase64(bytes) {
 // renameLayer/setLayerOpacity/createGroup/addMask targets) instead of guessing
 // "Layer 1", and which are currently selected so the user can point at a target
 // by selecting it in the Layers panel. Top layer first, matching panel order.
-function readLayerContext() {
+// Also reports develop-editable RAW smart objects (CreaCon-opened ones) with
+// their current sidecar settings, so the model can route global tone/color to
+// applyCameraRaw and merge onto the current state instead of resetting it.
+async function readLayerContext() {
   try {
     const { app } = require("photoshop");
+    const { listRawLayers } = require("./executor/cameraRaw");
     const doc = app.activeDocument;
-    return {
+    const context = {
       layer_names: doc.layers.map((l) => l.name),
       selected_layers: doc.activeLayers.map((l) => l.name),
     };
+    const raws = await listRawLayers(doc);
+    if (raws.length) context.camera_raw = { raws };
+    return context;
   } catch (err) {
     console.warn("CreaCon: could not read layer context.", err);
     return { layer_names: [], selected_layers: [] };
@@ -61,7 +68,7 @@ function readLayerContext() {
 // when the assistant just talked and didn't propose edits.
 async function sendChat(messages) {
   const imageBase64 = await capturePreviewImage();
-  const layerContext = readLayerContext();
+  const layerContext = await readLayerContext();
   log("Layer context ->", layerContext);
 
   const response = await fetch(CHAT_URL, {
@@ -72,6 +79,7 @@ async function sendChat(messages) {
       image_base64: imageBase64,
       layer_names: layerContext.layer_names,
       selected_layers: layerContext.selected_layers,
+      camera_raw: layerContext.camera_raw || null,
     }),
   });
 
@@ -83,4 +91,4 @@ async function sendChat(messages) {
   return response.json();
 }
 
-module.exports = { sendChat };
+module.exports = { sendChat, capturePreviewImage };

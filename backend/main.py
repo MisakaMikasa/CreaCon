@@ -29,6 +29,7 @@ class EditPlanRequest(BaseModel):
     image_base64: Optional[str] = None
     layer_names: Optional[List[str]] = None
     selected_layers: Optional[List[str]] = None
+    camera_raw: Optional[dict] = None  # {"raws": [{"layer": name, "settings": {...}|None}]}
 
 
 @app.post("/edit-plan")
@@ -36,7 +37,11 @@ def edit_plan(req: EditPlanRequest):
     if not req.instruction.strip():
         raise HTTPException(400, "instruction must not be empty")
 
-    context = {"layer_names": req.layer_names, "selected_layers": req.selected_layers}
+    context = {
+        "layer_names": req.layer_names,
+        "selected_layers": req.selected_layers,
+        "camera_raw": req.camera_raw,
+    }
     logger.info("layer context: %s", context)
     plan = request_edit_plan(req.instruction, req.image_base64, context)
 
@@ -91,6 +96,7 @@ class ChatRequest(BaseModel):
     image_base64: Optional[str] = None
     layer_names: Optional[List[str]] = None
     selected_layers: Optional[List[str]] = None
+    camera_raw: Optional[dict] = None  # {"raws": [{"layer": name, "settings": {...}|None}]}
 
 
 @app.post("/chat")
@@ -98,7 +104,11 @@ def chat_endpoint(req: ChatRequest):
     if not req.messages:
         raise HTTPException(400, "messages must not be empty")
 
-    context = {"layer_names": req.layer_names, "selected_layers": req.selected_layers}
+    context = {
+        "layer_names": req.layer_names,
+        "selected_layers": req.selected_layers,
+        "camera_raw": req.camera_raw,
+    }
     logger.info("chat: %d messages, layer context: %s", len(req.messages), context)
 
     conversation = [{"role": m.role, "content": m.content} for m in req.messages]

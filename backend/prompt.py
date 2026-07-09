@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema" / "editPlan.schema.json"
@@ -13,7 +14,10 @@ _SHARED_RULES = f"""The edit plan is a JSON object that MUST strictly match this
 Rules:
 - Only use the operations, enums, and params defined in the schema above. Never invent new ones.
 - Prefer non-destructive operations: adjustment layers and masks, never direct pixel edits.
-- Masking (addMask) lets an adjustment affect only part of the image. Choose the maskType:
+- Masking (addMask) lets an adjustment affect only part of the image. NOTE: on RAW smart \
+object layers, prefer Camera Raw local masks (applyCameraRaw MaskGroupBasedCorrections, \
+described below) for regional tone/color - use addMask only for non-raw layers or when the \
+user explicitly wants a separate, toggleable adjustment layer. Choose the maskType:
   - "selectSubject" / "selectSky" - Photoshop's built-in AI selection, for masking to the \
 main subject or the sky. Use these for content-based regions; do not try to describe a \
 pixel-precise mask yourself.
@@ -85,7 +89,75 @@ hardLight, colorDodge, colorBurn, linearDodge, linearBurn, darken, lighten, diff
 exclusion, hue, saturation, color, luminosity. Use blend modes for looks that adjustment \
 values alone can't achieve - e.g. "soft light" or "overlay" for punchy contrast, "multiply" \
 to deepen shadows/darken, "screen" to brighten/glow, "color" or "hue" to shift color without \
-touching luminosity. Create the adjustment layer first, then setBlendMode on it by name."""
+touching luminosity. Create the adjustment layer first, then setBlendMode on it by name.
+
+CAMERA RAW DEVELOP (applyCameraRaw) - only available when the conversation context lists \
+"RAW smart objects". This op develops the RAW photo itself (real raw latitude: genuine \
+highlight recovery, true Kelvin white balance, cleaner masked exposure moves):
+{{ "op": "applyCameraRaw", "params": {{ "targetLayer": "<RAW layer name>", "settings": \
+{{ ...complete develop state... }} }} }}
+
+ROUTING DOCTRINE - which system owns which edit:
+- RAW layer + GLOBAL tone/color/look ("warmer", "recover highlights", "cinematic") \
+-> applyCameraRaw flat keys.
+- RAW layer + per-color work ("boost the blues", "shift greens teal") -> applyCameraRaw \
+HSL keys. RAW layer + shadow/highlight tinting ("teal shadows, golden highlights") \
+-> applyCameraRaw SplitToning keys.
+- RAW layer + REGIONAL tone/color ("darken the sky", "brighten the subject", "dim the \
+left side") -> applyCameraRaw MaskGroupBasedCorrections (below). PREFER this over \
+adjustment layers + addMask for raw photos - it edits raw data and masks carry their own \
+develop values.
+- No RAW layer (JPEG/PSD documents) -> the adjustment-layer + addMask ops, as before.
+- Discrete toggleable elements the user wants as visible layers, blend-mode looks \
+(multiply/screen/softLight), groups, opacity -> adjustment-layer ops even on raw docs.
+- Never do the same conceptual change through both systems.
+
+Flat settings keys (integers -100..100 unless noted):
+- Basic: Exposure2012 -5..5 (stops, float), Contrast2012, Highlights2012 (negative recovers \
+blown highlights), Shadows2012 (positive lifts), Whites2012, Blacks2012, Texture, \
+Clarity2012, Dehaze, Vibrance, Saturation; Temperature 2000..50000 Kelvin (~5500 daylight, \
+LOWER = bluer, HIGHER = oranger); Tint -150..150 (green- to magenta+).
+- HSL mixer (per color range Red/Orange/Yellow/Green/Aqua/Blue/Purple/Magenta): \
+HueAdjustmentX (shift the hue), SaturationAdjustmentX, LuminanceAdjustmentX - e.g. deeper \
+blue sky = SaturationAdjustmentBlue 30, LuminanceAdjustmentBlue -20.
+- Color grading: SplitToningShadowHue / SplitToningHighlightHue 0..360, \
+SplitToningShadowSaturation / SplitToningHighlightSaturation 0..100, SplitToningBalance \
+-100..100, ColorGradeBlending 0..100 (teal-orange: shadow hue ~215 sat ~20, highlight hue \
+~45 sat ~25).
+- Detail/effects: Sharpness 0..150, LuminanceSmoothing 0..100 (luma noise reduction), \
+ColorNoiseReduction 0..100, GrainAmount 0..100, PostCropVignetteAmount -100..100 \
+(negative = darkened corners; use this for vignettes on raw, not a radial mask).
+
+LOCAL MASKS (settings.MaskGroupBasedCorrections): an array of corrections; each correction \
+= a region plus its OWN develop values. Local values are floats -1..+1 (fraction of full \
+slider strength; -0.3 is a moderate move): LocalExposure2012, LocalContrast2012, \
+LocalHighlights2012, LocalShadows2012, LocalWhites2012, LocalBlacks2012, LocalClarity2012, \
+LocalDehaze, LocalTexture, LocalSaturation, LocalTemperature, LocalTint, LocalSharpness. \
+Each correction needs CorrectionName and CorrectionMasks (1+ masks):
+- AI mask: {{ "What": "Mask/Image", "MaskSubType": 2, "MaskName": "Sky", "ReferencePoint": \
+"0.500000 0.500000" }} - MaskSubType 1 = Subject, 2 = Sky, 3 = Person. Set ReferencePoint \
+to where the target sits in the preview image.
+- Linear gradient: {{ "What": "Mask/Gradient", "ZeroX":, "ZeroY":, "FullX":, "FullY": }} \
+(normalized 0..1): full effect at (FullX,FullY) fading to nothing at (ZeroX,ZeroY) - "dim \
+the left 25%" = FullX 0, ZeroX 0.25, both Y 0.5.
+- Radial: {{ "What": "Mask/CircularGradient", "Top":, "Left":, "Bottom":, "Right":, \
+"Feather": 50 }} (normalized ellipse bounds; estimate the subject's position from the \
+preview). "MaskInverted": true affects everything OUTSIDE the ellipse.
+Example - "darken the sky and make it deeper blue":
+{{ "SaturationAdjustmentBlue": 25, "LuminanceAdjustmentBlue": -15, \
+"MaskGroupBasedCorrections": [ {{ "CorrectionName": "Darken sky", "LocalExposure2012": \
+-0.35, "CorrectionMasks": [ {{ "What": "Mask/Image", "MaskSubType": 2, "MaskName": "Sky", \
+"ReferencePoint": "0.500000 0.250000" }} ] }} ] }}
+
+FULL-STATE RULE: "settings" REPLACES the photo's entire develop state, INCLUDING the whole \
+MaskGroupBasedCorrections array. Start from the "current develop settings" shown in the \
+context, copy every key AND every correction you don't mean to change, then merge your \
+changes. A key you omit resets to camera default; a correction you omit is deleted - \
+omitting is how you UNDO, and dropping something the user didn't ask you to remove is a bug.
+- targetLayer must be one of the RAW smart object layer names from the context (optional \
+when only one exists).
+- The user can Ctrl+Z the visual change, but the sidecar keeps the applied settings - the \
+"current develop settings" in the context are always the truth."""
 
 
 # Single-shot prompt (legacy /edit-plan endpoint): forces a tool call.
@@ -136,6 +208,18 @@ def layer_context_block(context) -> str:
             f"Currently selected layer(s): {sel}. "
             "If the request refers to a target vaguely (e.g. 'this layer', 'the selected "
             "layer', 'it', or an unnamed 'the photo'), operate on the selected layer(s)."
+        )
+
+    # Develop-editable RAW smart objects (opened via CreaCon's Open RAW button).
+    # Shown with their full current develop state so the model can merge instead
+    # of resetting sliders (see the FULL-STATE RULE in _SHARED_RULES).
+    raws = (context.get("camera_raw") or {}).get("raws") or []
+    for raw in raws:
+        settings = raw.get("settings")
+        state = json.dumps(settings) if settings else "(camera defaults - nothing applied yet)"
+        lines.append(
+            f'RAW smart object "{raw.get("layer")}" (develop-editable via applyCameraRaw) - '
+            f"current develop settings: {state}"
         )
     return "\n".join(lines)
 

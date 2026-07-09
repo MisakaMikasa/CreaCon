@@ -1,6 +1,8 @@
 const { sendChat } = require("./aiClient");
 const { validateEditPlan } = require("./validator");
 const { applyEditPlan } = require("./executor/index");
+const { runAcrReloadSpike } = require("./spike/acrReloadSpike");
+const { openRawAsSmartObject } = require("./executor/cameraRaw");
 const { log, error, formatError } = require("./log");
 
 // Each entry: { role: "user"|"assistant"|"system"|"error", text, plan?, planStatus?, thinking? }
@@ -168,11 +170,80 @@ async function onApply(idx) {
     await applyEditPlan(msg.plan, (i, step) => log(`Step ${i} done:`, step.op));
     msg.planStatus = "applied";
     conversation.push({ role: "system", text: `Applied: ${msg.plan.summary || "the edit"}` });
+    // ACR loads AI mask *parameters* headlessly but may not run the actual
+    // segmentation until nudged (the "Update AI settings" affordance) - warn
+    // the user so an unchanged region isn't mistaken for a failed edit.
+    const usesAiMask = msg.plan.steps.some(
+      (s) =>
+        s.op === "applyCameraRaw" &&
+        (s.params.settings.MaskGroupBasedCorrections || []).some((c) =>
+          (c.CorrectionMasks || []).some((m) => m.What === "Mask/Image")
+        )
+    );
+    if (usesAiMask) {
+      conversation.push({
+        role: "system",
+        text:
+          "Note: this edit uses AI masks (sky/subject/person). If the masked region looks " +
+          "unchanged, click \"Update AI settings\" when Photoshop offers it (or open the " +
+          "layer in Camera Raw once) so the selection is computed.",
+      });
+    }
   } catch (err) {
     error("Apply failed:", err);
     msg.planStatus = undefined; // allow retry
     conversation.push({ role: "error", text: `Error applying edit: ${formatError(err)}` });
   } finally {
+    render();
+  }
+}
+
+// Places a user-picked raw file as a smart object and registers its path so
+// chat plans can develop it via applyCameraRaw (sidecar + re-import). This is
+// the REQUIRED entry point for raw editing: smart objects created outside
+// CreaCon have no recoverable file path (see rawRegistry.js).
+async function onOpenRaw() {
+  if (busy) return;
+  busy = true;
+  render();
+  try {
+    const layerName = await openRawAsSmartObject((text) => {
+      conversation.push({ role: "system", text });
+      render();
+    });
+    if (layerName) {
+      conversation.push({
+        role: "system",
+        text:
+          `Opened RAW as smart object layer "${layerName}". ` +
+          "Ask for develop edits - exposure, white balance, dehaze, color…",
+      });
+    }
+  } catch (err) {
+    error("Open RAW failed:", err);
+    conversation.push({ role: "error", text: `Open RAW failed: ${formatError(err)}` });
+  } finally {
+    busy = false;
+    render();
+  }
+}
+
+// Dev-only: runs the ACR sidecar-reload spike (see src/spike/acrReloadSpike.js).
+// Results stream into the chat as system messages so no debug console is needed.
+async function onSpike() {
+  if (busy) return;
+  busy = true;
+  render();
+  try {
+    await runAcrReloadSpike((text) => {
+      conversation.push({ role: "system", text });
+      render();
+    });
+  } catch (err) {
+    error("Spike failed:", err);
+    conversation.push({ role: "error", text: `Spike failed: ${formatError(err)}` });
+  } finally {
+    busy = false;
     render();
   }
 }
@@ -190,6 +261,8 @@ function removeMessage(msg) {
 
 function setup() {
   el("btnSend").addEventListener("click", onSend);
+  el("btnOpenRaw").addEventListener("click", onOpenRaw);
+  el("btnSpike").addEventListener("click", onSpike);
   el("chatInput").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();

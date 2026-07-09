@@ -6,7 +6,14 @@
       "Bash(./.venv/Scripts/python.exe -c \"from anthropic.types import ToolParam; print\\('ToolParam import OK'\\)\")",
       "Bash(python -c \"import json; json.load\\(open\\('schema/editPlan.schema.json'\\)\\); print\\('schema valid'\\)\")",
       "Bash(python -c \"import json; json.load\\(open\\('schema/editPlan.schema.json'\\)\\); print\\('valid'\\)\")",
-      "Bash(python -m py_compile prompt.py)"
+      "Bash(python -m py_compile prompt.py)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.marktechpost.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(find \"C:/Users/sharl/OneDrive/Documents/Jarvis\" -maxdepth 2 -type d 2>/dev/null | head -60)",
+      "Read(//c/Users/sharl/OneDrive/Documents/Jarvis/**)",
+      "Bash(find \"C:/Users/sharl/OneDrive/Documents/Jarvis/JarvisArt/lrc_scripts\" -type f 2>/dev/null | grep -v '\\\\.git' | head -100)",
+      "Read(//c/Users/sharl/OneDrive/Documents/Jarvis/JarvisArt/lrc_scripts/**)"
     ]
   }
 }

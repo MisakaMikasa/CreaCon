@@ -6,6 +6,7 @@ const { setLayerOpacity } = require("./opacity");
 const { createGroup } = require("./group");
 const { addMask } = require("./mask");
 const { setBlendMode } = require("./setBlendMode");
+const { applyCameraRaw } = require("./cameraRaw");
 
 const HANDLERS = {
   createAdjustmentLayer,
@@ -15,6 +16,7 @@ const HANDLERS = {
   createGroup,
   addMask,
   setBlendMode,
+  applyCameraRaw,
 };
 
 // Stagger steps so the user can watch each layer/mask appear one at a time,

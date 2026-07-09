@@ -52,6 +52,7 @@ and reversible in the Layers panel afterward. The AI proposes; you approve; Phot
 | `setLayerOpacity` | Set layer opacity 0–100 |
 | `renameLayer` | Rename a layer |
 | `createGroup` | Group layers into a folder (searches nested layers) |
+| `applyCameraRaw` | Develop a RAW photo (true raw latitude) by rewriting its XMP sidecar and re-importing — see below |
 
 ### Adjustment types (6)
 
@@ -73,6 +74,53 @@ and reversible in the Layers panel afterward. The AI proposes; you approve; Phot
 | `linearGradient` | `direction` (left/right/top/bottom) **or** arbitrary `angle` (diagonals), `size` (how far the fade reaches — e.g. "only the left 25%"), `strength` |
 | `radialGradient` | `center` [x,y] (the AI estimates the subject's position from the preview), `size` (radius), `region` (center spotlight vs edge vignette), `strength` |
 | `full` / `invert` | Whole-image masks |
+
+### RAW develop editing (Camera Raw via XMP sidecar)
+
+Adobe Camera Raw cannot be scripted directly (its filter dialog ignores scripted settings —
+a longstanding, deliberate limitation). CreaCon controls it **declaratively** instead: the
+`applyCameraRaw` op writes the complete develop state (exposure, highlights/shadows, true
+Kelvin white balance, texture/clarity/dehaze, vibrance/saturation — Adobe's `crs:` keys)
+into the raw file's `.xmp` sidecar, then forces a re-import with
+`placedLayerReplaceContents`, making ACR re-develop the photo with the new settings.
+Verified end-to-end by the spike in `CreaCon/src/spike/acrReloadSpike.js` (🧪 dev button).
+
+Flow: click **📷 Open RAW** in the panel (this places the raw as a smart object and — 
+crucially — records its file path, which Photoshop does not retain for embedded smart
+objects), then just chat: *"recover the highlights and make it warmer"*.
+
+The develop vocabulary covers the Basic panel, the full **HSL color mixer**, **color
+grading** (split toning), detail (sharpen/NR), grain/vignette, and **local masks** —
+each `MaskGroupBasedCorrections` entry is a region (AI **sky/subject/person** via
+`Mask/Image`, linear `Mask/Gradient`, radial `Mask/CircularGradient`) carrying its own
+develop values (`LocalExposure2012` etc., normalized −1..+1). The mask vocabulary and
+units follow Adobe's own `crs:` conventions (cross-checked against JarvisArt's).
+
+**Routing doctrine** (encoded in `backend/prompt.py`):
+
+| Edit intent | Route |
+|---|---|
+| Global tone / WB / HSL / grading / detail on a RAW layer | `applyCameraRaw` flat keys |
+| Regional tone/color on RAW (sky, subject, gradients) | `applyCameraRaw` local masks |
+| Anything on JPEG/PSD documents | adjustment layers + masks |
+| Discrete toggleable layers, blend modes, groups | PS-native ops, even on raw docs |
+
+Limitations:
+
+- RAW files only (CR2/CR3/NEF/ARW/RAF/ORF/RW2). JPEG/PSD documents keep the
+  adjustment-layer path. **DNG is not supported** (it embeds settings inside the file).
+- Raw smart objects created *outside* CreaCon (e.g. ACR's own "Open as Smart Object")
+  can't be develop-edited — their source path is unrecoverable. Use 📷 Open RAW.
+- The path registry is in-memory: after a plugin reload, re-open the raw via 📷.
+- Ctrl+Z undoes the visual change but not the sidecar file; the model always sees the
+  sidecar's current state and can revert by re-applying previous settings.
+- Requires ACR preference "Save image settings in: **Sidecar '.xmp' files**".
+- The develop state shown to the model comes from CreaCon's own cache — settings changed
+  manually in the ACR dialog aren't seen until the next CreaCon apply.
+- **AI masks** (sky/subject/person) load with the sidecar, but Photoshop may not run the
+  actual segmentation until the user clicks **"Update AI settings"** once (verified on
+  Fuji RAF: everything else applies headlessly; the panel posts a reminder after any
+  AI-mask edit). Geometric masks (linear/radial) are fully headless.
 
 ### Agent capabilities
 

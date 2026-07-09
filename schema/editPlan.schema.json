@@ -31,7 +31,8 @@
             "setLayerOpacity",
             "createGroup",
             "addMask",
-            "setBlendMode"
+            "setBlendMode",
+            "applyCameraRaw"
           ]
         },
         "description": {
@@ -204,6 +205,139 @@
                     "minimum": 0,
                     "maximum": 100,
                     "description": "For gradient masks: how strong the effect is at its peak (100 = full effect, lower = subtler). Default 100."
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "applyCameraRaw" } } },
+          "then": {
+            "properties": {
+              "params": {
+                "type": "object",
+                "required": ["settings"],
+                "additionalProperties": false,
+                "properties": {
+                  "targetLayer": {
+                    "type": "string",
+                    "description": "Name of the RAW smart-object layer to develop (from the 'RAW smart objects' context). Optional when exactly one RAW layer exists."
+                  },
+                  "settings": {
+                    "type": "object",
+                    "description": "The COMPLETE Camera Raw develop state for this photo. Keys use Adobe's crs names. This REPLACES all previous develop settings (including ALL masks) - merge the current settings with your changes; an omitted key resets to camera default.",
+                    "additionalProperties": false,
+                    "minProperties": 1,
+                    "properties": {
+                      "Exposure2012": { "type": "number", "minimum": -5, "maximum": 5, "description": "Exposure in stops." },
+                      "Contrast2012": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "Highlights2012": { "type": "integer", "minimum": -100, "maximum": 100, "description": "Negative recovers blown highlights." },
+                      "Shadows2012": { "type": "integer", "minimum": -100, "maximum": 100, "description": "Positive lifts shadows." },
+                      "Whites2012": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "Blacks2012": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "Texture": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "Clarity2012": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "Dehaze": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "Vibrance": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "Saturation": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "Temperature": { "type": "integer", "minimum": 2000, "maximum": 50000, "description": "White balance in Kelvin (RAW absolute scale; ~5500 = daylight, lower = cooler/bluer, higher = warmer/oranger)." },
+                      "Tint": { "type": "integer", "minimum": -150, "maximum": 150, "description": "Green (negative) to magenta (positive)." },
+                      "HueAdjustmentRed": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "HueAdjustmentOrange": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "HueAdjustmentYellow": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "HueAdjustmentGreen": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "HueAdjustmentAqua": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "HueAdjustmentBlue": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "HueAdjustmentPurple": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "HueAdjustmentMagenta": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "SaturationAdjustmentRed": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "SaturationAdjustmentOrange": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "SaturationAdjustmentYellow": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "SaturationAdjustmentGreen": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "SaturationAdjustmentAqua": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "SaturationAdjustmentBlue": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "SaturationAdjustmentPurple": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "SaturationAdjustmentMagenta": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "LuminanceAdjustmentRed": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "LuminanceAdjustmentOrange": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "LuminanceAdjustmentYellow": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "LuminanceAdjustmentGreen": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "LuminanceAdjustmentAqua": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "LuminanceAdjustmentBlue": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "LuminanceAdjustmentPurple": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "LuminanceAdjustmentMagenta": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "SplitToningShadowHue": { "type": "integer", "minimum": 0, "maximum": 360 },
+                      "SplitToningShadowSaturation": { "type": "integer", "minimum": 0, "maximum": 100 },
+                      "SplitToningHighlightHue": { "type": "integer", "minimum": 0, "maximum": 360 },
+                      "SplitToningHighlightSaturation": { "type": "integer", "minimum": 0, "maximum": 100 },
+                      "SplitToningBalance": { "type": "integer", "minimum": -100, "maximum": 100 },
+                      "ColorGradeBlending": { "type": "integer", "minimum": 0, "maximum": 100 },
+                      "Sharpness": { "type": "integer", "minimum": 0, "maximum": 150 },
+                      "LuminanceSmoothing": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Luminance noise reduction." },
+                      "ColorNoiseReduction": { "type": "integer", "minimum": 0, "maximum": 100 },
+                      "GrainAmount": { "type": "integer", "minimum": 0, "maximum": 100 },
+                      "PostCropVignetteAmount": { "type": "integer", "minimum": -100, "maximum": 100, "description": "Negative darkens corners (classic vignette)." },
+                      "MaskGroupBasedCorrections": {
+                        "type": "array",
+                        "maxItems": 8,
+                        "description": "Local adjustments: each correction is a region (one or more masks) plus its own develop values. REPLACES all existing corrections - copy forward any being kept.",
+                        "items": {
+                          "type": "object",
+                          "required": ["CorrectionName", "CorrectionMasks"],
+                          "additionalProperties": false,
+                          "properties": {
+                            "CorrectionName": { "type": "string" },
+                            "CorrectionAmount": { "type": "number", "minimum": 0, "maximum": 1, "description": "Overall strength of this correction (default 1)." },
+                            "CorrectionActive": { "type": "boolean" },
+                            "LocalExposure2012": { "type": "number", "minimum": -1, "maximum": 1, "description": "Local exposure as fraction of full slider (-1..+1)." },
+                            "LocalContrast2012": { "type": "number", "minimum": -1, "maximum": 1 },
+                            "LocalHighlights2012": { "type": "number", "minimum": -1, "maximum": 1 },
+                            "LocalShadows2012": { "type": "number", "minimum": -1, "maximum": 1 },
+                            "LocalWhites2012": { "type": "number", "minimum": -1, "maximum": 1 },
+                            "LocalBlacks2012": { "type": "number", "minimum": -1, "maximum": 1 },
+                            "LocalClarity2012": { "type": "number", "minimum": -1, "maximum": 1 },
+                            "LocalDehaze": { "type": "number", "minimum": -1, "maximum": 1 },
+                            "LocalTexture": { "type": "number", "minimum": -1, "maximum": 1 },
+                            "LocalSaturation": { "type": "number", "minimum": -1, "maximum": 1 },
+                            "LocalTemperature": { "type": "number", "minimum": -1, "maximum": 1, "description": "Local warm/cool shift (-1 cool .. +1 warm)." },
+                            "LocalTint": { "type": "number", "minimum": -1, "maximum": 1 },
+                            "LocalSharpness": { "type": "number", "minimum": -1, "maximum": 1 },
+                            "CorrectionMasks": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 4,
+                              "items": {
+                                "type": "object",
+                                "required": ["What"],
+                                "additionalProperties": false,
+                                "properties": {
+                                  "What": { "type": "string", "enum": ["Mask/Image", "Mask/CircularGradient", "Mask/Gradient"] },
+                                  "MaskName": { "type": "string" },
+                                  "MaskInverted": { "type": "boolean" },
+                                  "MaskValue": { "type": "number", "minimum": 0, "maximum": 1, "description": "Mask opacity (default 1)." },
+                                  "MaskBlendMode": { "type": "integer", "enum": [0, 1], "description": "0 = add to other masks, 1 = intersect." },
+                                  "MaskSubType": { "type": "integer", "enum": [1, 2, 3], "description": "Mask/Image only: 1 = Subject, 2 = Sky, 3 = Person (AI-computed selection)." },
+                                  "ReferencePoint": { "type": "string", "description": "Mask/Image only: 'x y' normalized center of the target, e.g. '0.500000 0.500000'." },
+                                  "Top": { "type": "number", "minimum": -0.5, "maximum": 1.5, "description": "Mask/CircularGradient: ellipse bounds, normalized." },
+                                  "Left": { "type": "number", "minimum": -0.5, "maximum": 1.5 },
+                                  "Bottom": { "type": "number", "minimum": -0.5, "maximum": 1.5 },
+                                  "Right": { "type": "number", "minimum": -0.5, "maximum": 1.5 },
+                                  "Angle": { "type": "number", "minimum": 0, "maximum": 360 },
+                                  "Midpoint": { "type": "number", "minimum": 0, "maximum": 100 },
+                                  "Feather": { "type": "number", "minimum": 0, "maximum": 100 },
+                                  "Flipped": { "type": "boolean" },
+                                  "ZeroX": { "type": "number", "minimum": -0.5, "maximum": 1.5, "description": "Mask/Gradient (linear): point where the effect has faded to zero, normalized." },
+                                  "ZeroY": { "type": "number", "minimum": -0.5, "maximum": 1.5 },
+                                  "FullX": { "type": "number", "minimum": -0.5, "maximum": 1.5, "description": "Mask/Gradient (linear): point where the effect is full strength." },
+                                  "FullY": { "type": "number", "minimum": -0.5, "maximum": 1.5 }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
                   }
                 }
               }
