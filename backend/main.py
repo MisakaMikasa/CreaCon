@@ -97,6 +97,7 @@ class ChatRequest(BaseModel):
     layer_names: Optional[List[str]] = None
     selected_layers: Optional[List[str]] = None
     camera_raw: Optional[dict] = None  # {"raws": [{"layer": name, "settings": {...}|None}]}
+    aggressiveness: Optional[int] = None  # 1..5; None = no guidance (default behavior)
 
 
 @app.post("/chat")
@@ -108,6 +109,7 @@ def chat_endpoint(req: ChatRequest):
         "layer_names": req.layer_names,
         "selected_layers": req.selected_layers,
         "camera_raw": req.camera_raw,
+        "aggressiveness": req.aggressiveness,
     }
     logger.info("chat: %d messages, layer context: %s", len(req.messages), context)
 

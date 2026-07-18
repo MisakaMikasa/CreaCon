@@ -77,7 +77,7 @@ function withTimeout(promise, ms, fallback) {
   ]);
 }
 
-async function sendChat(messages) {
+async function sendChat(messages, options = {}) {
   const imageBase64 = await withTimeout(capturePreviewImage(), 15000, null);
   if (imageBase64 === null) log("Preview capture skipped (timeout or failure) - text-only turn.");
   const layerContext = await withTimeout(readLayerContext(), 10000, { layer_names: [], selected_layers: [] });
@@ -99,6 +99,7 @@ async function sendChat(messages) {
         layer_names: layerContext.layer_names,
         selected_layers: layerContext.selected_layers,
         camera_raw: layerContext.camera_raw || null,
+        aggressiveness: options.aggressiveness ?? null,
       }),
       ...(controller ? { signal: controller.signal } : {}),
     });

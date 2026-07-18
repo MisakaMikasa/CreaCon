@@ -7,6 +7,19 @@
 <body>
   <div id="chat">
     <div id="messages"></div>
+    <div id="intensityRow" style="display:flex; align-items:center; gap:6px; padding:2px 4px;">
+      <span style="font-size:11px; opacity:0.75;">Edit intensity</span>
+      <!-- Plain <select>: sp-picker is flaky across UXP versions. "Auto" sends
+           no aggressiveness guidance at all (the pre-existing behavior). -->
+      <select id="intensitySelect" style="font-size:11px;">
+        <option value="auto" selected>Auto</option>
+        <option value="1">1 · Correct</option>
+        <option value="2">2 · Gentle</option>
+        <option value="3">3 · Balanced</option>
+        <option value="4">4 · Expressive</option>
+        <option value="5">5 · Cinematic</option>
+      </select>
+    </div>
     <div id="inputRow">
       <sp-textarea id="chatInput" placeholder="Ask for edits, or describe the look you want…"></sp-textarea>
       <sp-button id="btnSend" variant="cta">Send</sp-button>

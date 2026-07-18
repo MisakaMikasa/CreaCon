@@ -204,6 +204,41 @@ user must press Apply before anything happens, so propose freely but don't assum
 {_SHARED_RULES}"""
 
 
+# User-selected edit intensity (1..5). Injected as a PREFIX line above the
+# user's message (prefix position carries far more weight than a line buried at
+# the bottom of the context block). Levels 1-2 use hard MUST-NOT limits -
+# soft words like "avoid" get steamrolled by vivid user prompts. Level None
+# (the panel's "Auto") injects nothing - the model behaves exactly as before.
+_AGGRESSIVENESS_GUIDANCE = {
+    1: "EDIT INTENSITY 1 (Correct): corrections ONLY - white balance, exposure, modest "
+       "tone recovery. HARD LIMITS: do NOT use SplitToning* keys, GrainAmount, "
+       "PostCropVignetteAmount, or MaskGroupBasedCorrections; keep Contrast2012, "
+       "Clarity2012, Texture, Dehaze within +/-10. Even for 'make it look good', deliver a "
+       "clean correction, not a look - the photo should look like itself, just right.",
+    2: "EDIT INTENSITY 2 (Gentle): a light, tasteful global polish. HARD LIMITS: no "
+       "GrainAmount; PostCropVignetteAmount no stronger than -10; SplitToning saturations "
+       "no higher than 8; local masks only if the user names a specific region.",
+    3: "EDIT INTENSITY 3 (Balanced): a confident grade plus at most some local masks where "
+       "they clearly serve the photo. Restraint over spectacle.",
+    4: "EDIT INTENSITY 4 (Expressive): stylized grading encouraged - split toning, HSL "
+       "shaping, multiple masks to sculpt light. The edit may read as a 'look'.",
+    5: "EDIT INTENSITY 5 (Cinematic): maximum impact - bold color grading, dramatic tonal "
+       "sculpting, vignette/grain, and SEVERAL local masks (AI sky/subject + gradients) to "
+       "sculpt light regionally. At this level a plan with no MaskGroupBasedCorrections is "
+       "almost certainly too timid.",
+}
+
+_AGGRESSIVENESS_CAVEAT = (
+    " (This calibrates OPEN-ENDED requests. If the user explicitly names a style or "
+    "specific change, their request overrides these limits.)"
+)
+
+
+def _aggressiveness_prefix(context) -> str:
+    guidance = _AGGRESSIVENESS_GUIDANCE.get((context or {}).get("aggressiveness"))
+    return f"[{guidance}{_AGGRESSIVENESS_CAVEAT}]\n" if guidance else ""
+
+
 def layer_context_block(context) -> str:
     """Formats the document's layer names + selection as a text block for the model."""
     context = context or {}
@@ -236,6 +271,7 @@ def layer_context_block(context) -> str:
             f'RAW smart object "{raw.get("layer")}" (develop-editable via applyCameraRaw) - '
             f"current develop settings: {state}"
         )
+
     return "\n".join(lines)
 
 
@@ -245,5 +281,5 @@ def build_user_message(instruction: str, context=None) -> str:
 
 
 def augment_user_text(text: str, context=None) -> str:
-    """Appends the current layer context to a chat user turn."""
-    return f"{text}\n\n{layer_context_block(context)}"
+    """Wraps a chat user turn: intensity prefix above, layer context below."""
+    return f"{_aggressiveness_prefix(context)}{text}\n\n{layer_context_block(context)}"

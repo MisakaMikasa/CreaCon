@@ -130,8 +130,11 @@ async function onSend() {
 
   try {
     const apiMessages = conversationForApi();
-    log("Sending chat,", apiMessages.length, "messages");
-    const { reply, edit_plan } = await sendChat(apiMessages);
+    // "auto" = no aggressiveness guidance sent (the default behavior).
+    const intensity = el("intensitySelect").value;
+    const aggressiveness = intensity === "auto" ? null : Number(intensity);
+    log("Sending chat,", apiMessages.length, "messages, intensity:", intensity);
+    const { reply, edit_plan } = await sendChat(apiMessages, { aggressiveness });
     log("Reply:", reply, "| plan:", edit_plan ? `${edit_plan.steps.length} steps` : "none");
 
     removeMessage(thinkingMsg);
