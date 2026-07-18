@@ -1,7 +1,6 @@
 const { sendChat } = require("./aiClient");
 const { validateEditPlan } = require("./validator");
 const { applyEditPlan } = require("./executor/index");
-const { runAcrReloadSpike } = require("./spike/acrReloadSpike");
 const { openRawAsSmartObject } = require("./executor/cameraRaw");
 const { log, error, formatError } = require("./log");
 
@@ -198,6 +197,56 @@ async function onApply(idx) {
   }
 }
 
+// Modal choice shown when an imported raw already has develop settings.
+// Resolves to "keep" | "fresh" | "cancel" (ESC = cancel).
+async function askImportChoice(fileName) {
+  const dialog = document.createElement("dialog");
+
+  const wrap = document.createElement("div");
+  wrap.style.padding = "16px";
+  wrap.style.maxWidth = "380px";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Existing edits found";
+  const body = document.createElement("p");
+  body.textContent =
+    `"${fileName}" already has Camera Raw develop settings ` +
+    "(from an earlier CreaCon layer, Lightroom, or manual Camera Raw edits).";
+  const tip = document.createElement("p");
+  tip.style.opacity = "0.7";
+  tip.textContent =
+    "Tip: a raw file holds ONE set of edits. To grade the same photo two different " +
+    "ways, duplicate the raw file on disk and import the copy.";
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.gap = "8px";
+  footer.style.justifyContent = "flex-end";
+  const mkButton = (label, variant, value) => {
+    const btn = document.createElement("sp-button");
+    btn.setAttribute("variant", variant);
+    btn.textContent = label;
+    btn.addEventListener("click", () => dialog.close(value));
+    return btn;
+  };
+  footer.appendChild(mkButton("Cancel", "secondary", "cancel"));
+  footer.appendChild(mkButton("Keep existing edits", "secondary", "keep"));
+  footer.appendChild(mkButton("Start fresh", "cta", "fresh"));
+
+  wrap.appendChild(heading);
+  wrap.appendChild(body);
+  wrap.appendChild(tip);
+  wrap.appendChild(footer);
+  dialog.appendChild(wrap);
+  document.body.appendChild(dialog);
+
+  // UXP's dialog.showModal() returns a promise resolving when closed;
+  // returnValue is whatever close() was given ("" on ESC).
+  const result = await dialog.showModal();
+  dialog.remove();
+  return result === "keep" || result === "fresh" ? result : "cancel";
+}
+
 // Places a user-picked raw file as a smart object and registers its path so
 // chat plans can develop it via applyCameraRaw (sidecar + re-import). This is
 // the REQUIRED entry point for raw editing: smart objects created outside
@@ -210,7 +259,7 @@ async function onOpenRaw() {
     const layerName = await openRawAsSmartObject((text) => {
       conversation.push({ role: "system", text });
       render();
-    });
+    }, askImportChoice);
     if (layerName) {
       conversation.push({
         role: "system",
@@ -222,26 +271,6 @@ async function onOpenRaw() {
   } catch (err) {
     error("Open RAW failed:", err);
     conversation.push({ role: "error", text: `Open RAW failed: ${formatError(err)}` });
-  } finally {
-    busy = false;
-    render();
-  }
-}
-
-// Dev-only: runs the ACR sidecar-reload spike (see src/spike/acrReloadSpike.js).
-// Results stream into the chat as system messages so no debug console is needed.
-async function onSpike() {
-  if (busy) return;
-  busy = true;
-  render();
-  try {
-    await runAcrReloadSpike((text) => {
-      conversation.push({ role: "system", text });
-      render();
-    });
-  } catch (err) {
-    error("Spike failed:", err);
-    conversation.push({ role: "error", text: `Spike failed: ${formatError(err)}` });
   } finally {
     busy = false;
     render();
@@ -262,7 +291,6 @@ function removeMessage(msg) {
 function setup() {
   el("btnSend").addEventListener("click", onSend);
   el("btnOpenRaw").addEventListener("click", onOpenRaw);
-  el("btnSpike").addEventListener("click", onSpike);
   el("chatInput").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();

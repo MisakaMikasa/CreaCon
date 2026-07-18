@@ -1,7 +1,6 @@
 {
-  "name": "uxp-template-ps-starter",
-  "version": "1.0.0",
-  "description": "Starter template for creating Adobe UXP based-Photoshop plugin.",
-  "author": "Adobe Inc",
+  "name": "creacon",
+  "version": "0.4.0",
+  "description": "CreaCon - AI photo-editing agent inside Adobe Photoshop (UXP panel).",
   "license": "Apache-2.0"
 }

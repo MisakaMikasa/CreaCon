@@ -13,7 +13,17 @@
       "Bash(find \"C:/Users/sharl/OneDrive/Documents/Jarvis\" -maxdepth 2 -type d 2>/dev/null | head -60)",
       "Read(//c/Users/sharl/OneDrive/Documents/Jarvis/**)",
       "Bash(find \"C:/Users/sharl/OneDrive/Documents/Jarvis/JarvisArt/lrc_scripts\" -type f 2>/dev/null | grep -v '\\\\.git' | head -100)",
-      "Read(//c/Users/sharl/OneDrive/Documents/Jarvis/JarvisArt/lrc_scripts/**)"
+      "Read(//c/Users/sharl/OneDrive/Documents/Jarvis/JarvisArt/lrc_scripts/**)",
+      "Bash(node --check src/executor/cameraRaw.js)",
+      "Bash(node -e ' *)",
+      "Bash(./.venv/Scripts/python.exe -c ' *)",
+      "Read(//c/Users/sharl/AppData/Roaming/Adobe/UXP/**)",
+      "Bash(python -c ' *)",
+      "Bash(./.venv/Scripts/python.exe -c \"import prompt; assert 'HUMAN BEING' in prompt.CHAT_SYSTEM_PROMPT; print\\('prompt OK'\\)\")",
+      "Bash(curl -s -o /dev/null -w \"backend HTTP status: %{http_code}, response time: %{time_total}s\\\\n\" --max-time 5 http://localhost:8000/docs)",
+      "Bash(./.venv/Scripts/python.exe -m uvicorn main:app --port 8000)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //F //PID 52628)"
     ]
   }
 }

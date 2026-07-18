@@ -81,13 +81,22 @@ Adobe Camera Raw cannot be scripted directly (its filter dialog ignores scripted
 a longstanding, deliberate limitation). CreaCon controls it **declaratively** instead: the
 `applyCameraRaw` op writes the complete develop state (exposure, highlights/shadows, true
 Kelvin white balance, texture/clarity/dehaze, vibrance/saturation — Adobe's `crs:` keys)
-into the raw file's `.xmp` sidecar, then forces a re-import with
-`placedLayerReplaceContents`, making ACR re-develop the photo with the new settings.
-Verified end-to-end by the spike in `CreaCon/src/spike/acrReloadSpike.js` (🧪 dev button).
+into the raw file's `.xmp` sidecar, then forces a re-import so ACR re-develops the photo
+with the new settings. The re-import is `placedLayerRelinkToFile` (re-pointing the link at
+the same raw) — NOT `placedLayerReplaceContents`, which silently converts the linked smart
+object to embedded and breaks the manual-edit merge; replaceContents remains only as the
+fallback for legacy embedded layers. Linked-ness is detected via `smartObject.linked` on
+the full layer descriptor (`smartObjectMore.link` never carries it). Verified end-to-end
+by the spike harnesses in `CreaCon/src/spike/` (kept as unwired dev tools — re-attach to a
+button if the mechanism ever needs re-testing).
 
-Flow: click **📷 Open RAW** in the panel (this places the raw as a smart object and — 
-crucially — records its file path, which Photoshop does not retain for embedded smart
-objects), then just chat: *"recover the highlights and make it warmer"*.
+Flow: click **📷 Open RAW** in the panel (this places the raw as a **linked** smart object
+and records its file path), then just chat: *"recover the highlights and make it warmer"*.
+Linked placement is deliberate and spike-verified: manual edits made by double-clicking the
+layer into ACR are written to the **same sidecar** CreaCon uses, so hand edits and AI edits
+merge instead of overwriting each other (global settings today; masks once parse-back
+lands). The trade: the raw file must stay at its path (a dependency the sidecar mechanism
+has anyway) and the PSD alone isn't portable — keep the raws with it.
 
 The develop vocabulary covers the Basic panel, the full **HSL color mixer**, **color
 grading** (split toning), detail (sharpen/NR), grain/vignette, and **local masks** —
@@ -111,16 +120,28 @@ Limitations:
   adjustment-layer path. **DNG is not supported** (it embeds settings inside the file).
 - Raw smart objects created *outside* CreaCon (e.g. ACR's own "Open as Smart Object")
   can't be develop-edited — their source path is unrecoverable. Use 📷 Open RAW.
-- The path registry is in-memory: after a plugin reload, re-open the raw via 📷.
+- The path registry persists across sessions (`rawRegistry.json` in the plugin data
+  folder, keyed by document path → layer ID, so multiple raws per document are fine).
+  Caveats: raws imported into a **never-saved** document are tracked for the current
+  session only (saving the document makes them permanent), and **Save As** to a new
+  path orphans the mapping — re-import via 📷 in that case.
+- Import applies no edits of its own; when a raw arrives with existing develop settings,
+  the user chooses at import time to keep them (fully read back, masks included) or start
+  fresh (timestamped backup + restorable via chat).
 - Ctrl+Z undoes the visual change but not the sidecar file; the model always sees the
   sidecar's current state and can revert by re-applying previous settings.
 - Requires ACR preference "Save image settings in: **Sidecar '.xmp' files**".
-- The develop state shown to the model comes from CreaCon's own cache — settings changed
-  manually in the ACR dialog aren't seen until the next CreaCon apply.
-- **AI masks** (sky/subject/person) load with the sidecar, but Photoshop may not run the
-  actual segmentation until the user clicks **"Update AI settings"** once (verified on
-  Fuji RAF: everything else applies headlessly; the panel posts a reminder after any
-  AI-mask edit). Geometric masks (linear/radial) are fully headless.
+- Manual edits (ACR dialog on the linked layer, or Lightroom) are detected via a content
+  hash and merged: the sidecar on disk is always the truth, masks included. Manual
+  adjustments CreaCon can't model (brush strokes, range masks, local curves, local color
+  grading) are preserved verbatim across applies and surfaced to the AI as
+  `"Unsupported": true` corrections it must copy forward.
+- **AI masks** (sky/subject/person) load with the sidecar, but each **new** mask needs one
+  manual **"Update AI settings"** click in ACR to run the segmentation (no scriptable
+  trigger exists — Adobe's design). After that, ACR's computed digests are preserved
+  through CreaCon rewrites, so value tweaks don't re-prompt. Geometric masks
+  (linear/radial) are fully headless. Person masks (`MaskSubType` 3) require an actual
+  person in the frame — ACR errors otherwise; the prompt steers the model accordingly.
 
 ### Agent capabilities
 

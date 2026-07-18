@@ -66,22 +66,45 @@ async function readLayerContext() {
 // Sends the full conversation (array of {role, content}) plus a fresh preview
 // image and layer context. Returns { reply, edit_plan } - edit_plan is null
 // when the assistant just talked and didn't propose edits.
+// Resolves to `fallback` if `promise` doesn't settle within ms. Needed because
+// executeAsModal QUEUES (potentially forever) while any Photoshop dialog is
+// open - without this, an open ACR/error dialog freezes the panel on
+// "Thinking…" via the preview export.
+function withTimeout(promise, ms, fallback) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 async function sendChat(messages) {
-  const imageBase64 = await capturePreviewImage();
-  const layerContext = await readLayerContext();
+  const imageBase64 = await withTimeout(capturePreviewImage(), 15000, null);
+  if (imageBase64 === null) log("Preview capture skipped (timeout or failure) - text-only turn.");
+  const layerContext = await withTimeout(readLayerContext(), 10000, { layer_names: [], selected_layers: [] });
   log("Layer context ->", layerContext);
 
-  const response = await fetch(CHAT_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messages,
-      image_base64: imageBase64,
-      layer_names: layerContext.layer_names,
-      selected_layers: layerContext.selected_layers,
-      camera_raw: layerContext.camera_raw || null,
-    }),
-  });
+  // Abort a hung backend call instead of "Thinking…" forever (LLM turns can
+  // legitimately take a while - keep this generous).
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const abortTimer = controller ? setTimeout(() => controller.abort(), 120000) : null;
+
+  let response;
+  try {
+    response = await fetch(CHAT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages,
+        image_base64: imageBase64,
+        layer_names: layerContext.layer_names,
+        selected_layers: layerContext.selected_layers,
+        camera_raw: layerContext.camera_raw || null,
+      }),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+  } finally {
+    if (abortTimer) clearTimeout(abortTimer);
+  }
 
   if (!response.ok) {
     const detail = await response.text();

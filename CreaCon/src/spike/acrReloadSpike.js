@@ -158,8 +158,8 @@ async function runAcrReloadSpike(report) {
         // Register so the placed layer is develop-editable via chat afterward
         // (same bookkeeping the panel's Open RAW button does).
         placedId = placed.id;
-        registry.register(placedId, rawPath);
-        registry.updateSettings(placedId, LOOK_A);
+        await registry.register(app.activeDocument, placedId, rawPath);
+        await registry.updateSettings(app.activeDocument, placedId, LOOK_A);
       }
     },
     { commandName: "CreaCon spike: place raw" }
@@ -180,7 +180,7 @@ async function runAcrReloadSpike(report) {
   await core.executeAsModal(async () => replaceContents(token2), {
     commandName: "CreaCon spike: replace contents",
   });
-  registry.updateSettings(placedId, LOOK_B);
+  await registry.updateSettings(app.activeDocument, placedId, LOOK_B);
   const previewT2 = await capturePreviewImage();
 
   const t2Changed =
@@ -216,8 +216,8 @@ async function runAcrReloadSpike(report) {
         await placeRaw(token3);
         const fresh = app.activeDocument.activeLayers[0];
         if (fresh) {
-          registry.register(fresh.id, rawPath);
-          registry.updateSettings(fresh.id, LOOK_C);
+          await registry.register(app.activeDocument, fresh.id, rawPath);
+          await registry.updateSettings(app.activeDocument, fresh.id, LOOK_C);
         }
       },
       { commandName: "CreaCon spike: fresh place" }
@@ -265,7 +265,7 @@ async function runAcrReloadSpike(report) {
     await core.executeAsModal(async () => replaceContents(token4), {
       commandName: "CreaCon spike: T4 masks",
     });
-    registry.updateSettings(placedId, maskSettings);
+    await registry.updateSettings(app.activeDocument, placedId, maskSettings);
     const previewT4 = await capturePreviewImage();
     const t4Changed = previewT2 && previewT4 ? previewT2 !== previewT4 : null;
     say(

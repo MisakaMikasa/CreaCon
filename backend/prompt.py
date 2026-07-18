@@ -135,14 +135,22 @@ LocalHighlights2012, LocalShadows2012, LocalWhites2012, LocalBlacks2012, LocalCl
 LocalDehaze, LocalTexture, LocalSaturation, LocalTemperature, LocalTint, LocalSharpness. \
 Each correction needs CorrectionName and CorrectionMasks (1+ masks):
 - AI mask: {{ "What": "Mask/Image", "MaskSubType": 2, "MaskName": "Sky", "ReferencePoint": \
-"0.500000 0.500000" }} - MaskSubType 1 = Subject, 2 = Sky, 3 = Person. Set ReferencePoint \
-to where the target sits in the preview image.
+"0.500000 0.500000" }} - MaskSubType 1 = the main SUBJECT, 2 = SKY, 3 = PERSON. Set \
+ReferencePoint to where the target sits in the preview image. STRICT: 3/Person means a \
+HUMAN BEING - Photoshop runs person-segmentation and ERRORS OUT if there is no person; \
+never use it for plants, animals, buildings, or objects. There is NO AI mask for foliage, \
+water, colors, or materials - target those with HSL keys (e.g. greens = \
+SaturationAdjustmentGreen / HueAdjustmentGreen / LuminanceAdjustmentGreen) or a geometric \
+mask over the region.
 - Linear gradient: {{ "What": "Mask/Gradient", "ZeroX":, "ZeroY":, "FullX":, "FullY": }} \
 (normalized 0..1): full effect at (FullX,FullY) fading to nothing at (ZeroX,ZeroY) - "dim \
-the left 25%" = FullX 0, ZeroX 0.25, both Y 0.5.
+the left 25%" = FullX 0, ZeroX 0.25, both Y 0.5. Softness = the Zero-Full distance (do NOT \
+put Feather on linear gradients; it is a radial-only key).
 - Radial: {{ "What": "Mask/CircularGradient", "Top":, "Left":, "Bottom":, "Right":, \
-"Feather": 50 }} (normalized ellipse bounds; estimate the subject's position from the \
-preview). "MaskInverted": true affects everything OUTSIDE the ellipse.
+"Feather": 50 }} (normalized ellipse bounds, may extend past 0..1; estimate the subject's \
+position from the preview). "Flipped" true (the default) = effect INSIDE the ellipse - the \
+normal case; set "Flipped": false only when the effect should hit everything OUTSIDE the \
+ellipse. Feather/Midpoint/Roundness are radial-only.
 Example - "darken the sky and make it deeper blue":
 {{ "SaturationAdjustmentBlue": 25, "LuminanceAdjustmentBlue": -15, \
 "MaskGroupBasedCorrections": [ {{ "CorrectionName": "Darken sky", "LocalExposure2012": \
@@ -154,6 +162,13 @@ MaskGroupBasedCorrections array. Start from the "current develop settings" shown
 context, copy every key AND every correction you don't mean to change, then merge your \
 changes. A key you omit resets to camera default; a correction you omit is deleted - \
 omitting is how you UNDO, and dropping something the user didn't ask you to remove is a bug.
+- The current develop settings INCLUDE any edits the user made by hand in Camera Raw or \
+Lightroom - they are just as authoritative as your own; merge on top of them, never "clean \
+them up" unasked.
+- A correction shown as {{ "CorrectionName": "...", "Unsupported": true }} is a manual \
+adjustment (brush strokes, range masks, curves) that is preserved verbatim but cannot be \
+edited here. ALWAYS copy it forward exactly as those two fields - drop it only when the \
+user explicitly asks to remove that named adjustment.
 - targetLayer must be one of the RAW smart object layer names from the context (optional \
 when only one exists).
 - The user can Ctrl+Z the visual change, but the sidecar keeps the applied settings - the \
