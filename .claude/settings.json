@@ -23,7 +23,9 @@
       "Bash(curl -s -o /dev/null -w \"backend HTTP status: %{http_code}, response time: %{time_total}s\\\\n\" --max-time 5 http://localhost:8000/docs)",
       "Bash(./.venv/Scripts/python.exe -m uvicorn main:app --port 8000)",
       "Bash(netstat -ano)",
-      "Bash(taskkill //F //PID 52628)"
+      "Bash(taskkill //F //PID 52628)",
+      "Bash(./.venv/Scripts/python.exe -m pip install pyautogui pygetwindow)",
+      "Bash(./.venv/Scripts/python.exe -c \"import pyautogui, pygetwindow; print\\('automation deps OK'\\)\")"
     ]
   }
 }

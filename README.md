@@ -202,6 +202,25 @@ The schema is deliberately the **single source of truth**: it is handed to the L
 schema or embedded in the prompt), enforced by the backend validator, and drives the plugin's
 own pre-execution check — three consumers, one definition, no drift.
 
+### Edit intensity
+
+A 1–5 selector above the chat input calibrates how far the agent goes on *open-ended*
+requests ("make it look good") — 1 is corrections-only (WB/exposure, hard-capped: no split
+toning, grain, vignette, or masks), 5 pushes full cinematic grading with several local
+masks. An explicit request always overrides the level. Default is **Auto**, which sends no
+guidance at all — identical to pre-feature behavior.
+
+### Self-check (trial)
+
+The 🔁 toggle adds a review pass after each apply: if the plan used AI masks, CreaCon opens
+the layer in Camera Raw while the backend drives "Update AI settings" via OS-level
+keystrokes (see `backend/README.md` — leave the keyboard/mouse alone while it runs), then
+sends the freshly rendered result back to the agent to verify it against the request and
+the active intensity level. Any correction the agent proposes **applies immediately,
+without an Apply click** — the one deliberate exception to the app's confirm-before-anything
+rule, scoped to this opt-in toggle and capped at one correction per user apply. Off by
+default.
+
 ## Development notes
 
 - **Schema changes**: edit `schema/editPlan.schema.json`, then run `node scripts/sync-schema.js`

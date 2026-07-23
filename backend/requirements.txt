@@ -7,3 +7,8 @@ python-dotenv
 # Pick the SDK(s) for the provider(s) you'll actually use (LLM_PROVIDER in .env)
 anthropic
 google-genai
+
+# Self-check trial: OS-level keyboard automation for ACR "Update AI settings"
+# (Windows; used by POST /acr/auto-accept)
+pyautogui
+pygetwindow

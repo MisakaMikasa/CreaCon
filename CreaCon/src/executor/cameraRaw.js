@@ -9,7 +9,14 @@ const { app, core, action } = require("photoshop");
 const { localFileSystem } = require("uxp").storage;
 const fs = require("fs");
 const { log, formatError } = require("../log");
-const { sidecarPathFor, serialize, parse, parseFull, hashText } = require("./xmpSidecar");
+const {
+  sidecarPathFor,
+  serialize,
+  parse,
+  parseFull,
+  hashText,
+  hasUncomputedAiMasks,
+} = require("./xmpSidecar");
 const registry = require("./rawRegistry");
 
 // DNG excluded: it embeds develop settings inside the file, so the sidecar
@@ -251,9 +258,15 @@ async function applyCameraRaw(params) {
   const sidecarPath = sidecarPathFor(target.rawPath);
   const currentXml = await readTextFileIfExists(sidecarPath);
   const extras = currentXml ? parseFull(currentXml).extras : undefined;
+  // Computed BEFORE writing: does this plan touch any AI mask that ACR has
+  // never computed (no preserved digest)? A mask whose identity is unchanged
+  // from a prior apply keeps its digest and needs no recompute - only a
+  // genuinely new/changed AI mask does. Lets the caller skip re-opening
+  // Camera Raw when nothing actually needs it (see hasUncomputedAiMasks doc).
+  const needsAiMaskCompute = hasUncomputedAiMasks(params.settings, extras);
   const xmlOut = serialize(params.settings, extras);
   await writeTextFile(sidecarPath, xmlOut);
-  log(`Sidecar written: ${sidecarPath}`, params.settings);
+  log(`Sidecar written: ${sidecarPath}`, params.settings, "needsAiMaskCompute:", needsAiMaskCompute);
 
   // 2+3. Select the layer, then re-import so ACR re-develops from the sidecar.
   // replaceContents operates on the SELECTED layer, hence the explicit select.
@@ -313,6 +326,38 @@ async function applyCameraRaw(params) {
   // Cache the applied state (incl. masks) + the hash of what we wrote, so
   // any future divergence on disk is recognized as an external edit.
   await registry.updateSettings(doc, target.id, params.settings, hashText(xmlOut));
+
+  return { needsAiMaskCompute, targetLayer: target.name };
 }
 
-module.exports = { applyCameraRaw, openRawAsSmartObject, listRawLayers, RAW_EXTENSIONS };
+// Opens the given (or sole) registered RAW layer in the Camera Raw dialog via
+// Edit Contents. The batchPlay call BLOCKS until the dialog closes - the
+// backend's /acr/auto-accept worker must be armed BEFORE calling this, so it
+// can drive the dialog (Ctrl+Shift+U, Enter) while we're suspended here.
+// On OK, ACR writes the computed AI-mask digests to the sidecar.
+async function openInAcrDialog(layerName) {
+  const doc = app.activeDocument;
+  const rawLayers = await registry.rawLayersIn(doc);
+  const target = layerName ? rawLayers.find((l) => l.name === layerName) : rawLayers[0];
+  if (!target) throw new Error("No registered RAW layer to open in Camera Raw");
+  await core.executeAsModal(
+    async () => {
+      await action.batchPlay(
+        [
+          { _obj: "select", _target: [{ _ref: "layer", _id: target.id }], makeVisible: false },
+          { _obj: "placedLayerEditContents" }, // opens the ACR modal; returns when it closes
+        ],
+        {}
+      );
+    },
+    { commandName: "CreaCon: update AI masks" }
+  );
+}
+
+module.exports = {
+  applyCameraRaw,
+  openRawAsSmartObject,
+  openInAcrDialog,
+  listRawLayers,
+  RAW_EXTENSIONS,
+};

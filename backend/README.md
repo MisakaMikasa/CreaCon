@@ -30,7 +30,23 @@ based on `LLM_PROVIDER`.
 ## Run
 
 ```
-uvicorn main:app --reload --port 8000
+uvicorn main:app --port 8000
 ```
 
+**Do not use `--reload`.** On this machine (Python 3.14 + Windows) it crashes during hot-reload's
+multiprocessing spawn, especially with a large `.venv` in the watched tree (watchfiles ends up
+watching thousands of dependency files). After editing backend code, stop the server (Ctrl+C)
+and restart it manually.
+
 The plugin (`CreaCon/src/aiClient.js`) posts to `http://localhost:8000/edit-plan` by default.
+
+## Self-check trial (optional keyboard automation)
+
+The panel's 🔁 toggle drives Camera Raw's "Update AI settings" via OS-level key events
+(`pyautogui`/`pygetwindow`, installed by `requirements.txt`) so AI masks compute without a
+manual click. **While it's running (a few seconds after an apply), leave the keyboard and
+mouse alone** - it sends real keystrokes to whatever window has focus.
+
+When 🔁 is on, the self-check's corrective edit **applies automatically, without the normal
+Apply-gate click** - the one deliberate exception in the whole app, capped at one correction
+per user-initiated apply. Leave it off if you want every edit to require your confirmation.

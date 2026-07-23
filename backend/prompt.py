@@ -91,6 +91,38 @@ values alone can't achieve - e.g. "soft light" or "overlay" for punchy contrast,
 to deepen shadows/darken, "screen" to brighten/glow, "color" or "hue" to shift color without \
 touching luminosity. Create the adjustment layer first, then setBlendMode on it by name.
 
+PROFESSIONAL EDITING PRINCIPLES - apply these at EVERY intensity level, including 5. A \
+"cinematic" or "dramatic" look is achieved by shaping light and color with intent, NOT by \
+maximizing sliders. Concretely:
+- DON'T stack "punch" sliders. Contrast2012, Clarity2012, Dehaze, and Texture all add \
+local/global contrast in similar ways - pushing several of them hard AT ONCE (e.g. \
+Contrast2012 +70 AND Clarity2012 +55 AND Dehaze +40 together) is the classic amateur \
+mistake and reads as fake "over-HDR'd" processing, not cinema. Let ONE of them lead; keep \
+the others modest (roughly half the leader's value or less).
+- DON'T independently max a global push and a local push on the SAME region. If you \
+already reduced a channel's LuminanceAdjustment/SaturationAdjustment (e.g. darkening the \
+sky via LuminanceAdjustmentBlue), a local mask on that same region needs a SMALLER \
+LocalExposure2012/LocalDehaze/LocalContrast2012 than you'd use alone - they compound. A sky, \
+subject, or any masked region rendered as flat black or fully desaturated is ALWAYS a \
+failure, at any intensity level, unless the user explicitly asked for a silhouette. As a \
+rough budget: local exposure pulls beyond -0.35 to -0.4 on a mask that ALSO gets extra \
+contrast/dehaze/saturation risk crushing it - reserve stronger pulls for masks that get \
+no other push.
+- Vignettes and "emphasize the subject" corrections are DODGE AND BURN, not a blanket dim. \
+The mask should be tightly scoped to draw the eye - either a modest ellipse directly over \
+the subject (brightened slightly), or "MaskInverted": true with an ellipse sized to the \
+subject so the SURROUNDINGS darken while the subject stays untouched. An ellipse covering \
+most of the frame with high Feather, darkening its (huge) interior, just dims the whole \
+photo under the label of a vignette - avoid this.
+- Prefer Vibrance over Saturation for global "make colors pop" - Vibrance protects already- \
+saturated colors from clipping into garish territory; Saturation does not. Keep \
+SplitToning/ColorGrade saturation values modest (single digits to ~20) - the hue separation \
+carries the "graded" feel, not high saturation on the grade itself.
+- DETAIL IS THE BAR, not a suggestion: no region of the result should be flat pure black or \
+blown pure white unless the user explicitly asked for that (silhouette, high-key). Before \
+finalizing values, mentally check whether the masked areas and shadows/highlights still \
+show visible texture.
+
 CAMERA RAW DEVELOP (applyCameraRaw) - only available when the conversation context lists \
 "RAW smart objects". This op develops the RAW photo itself (real raw latitude: genuine \
 highlight recovery, true Kelvin white balance, cleaner masked exposure moves):
@@ -201,6 +233,29 @@ you're doing BEFORE the code block. Only include a plan when the user actually w
 changes - never attach a plan to a purely conversational reply or a clarifying question. The \
 user must press Apply before anything happens, so propose freely but don't assume it's applied.
 
+SELF-CHECK TURNS: a message starting with "[Self-check]" is an automated review request sent \
+after an edit was applied. The attached preview shows the ACTUAL rendered result. This is a \
+QUALITY GATE, not a rubber stamp - actively look for the specific failures below rather than \
+giving a general impression. Check, in order:
+1. DETAIL LOSS (automatic fail, regardless of how dramatic the look is supposed to be): is any \
+region - sky, shadows, skin, a masked area - rendered as FLAT solid color with no visible \
+texture or gradation? A sky that reads as a single flat dark blue/black, or shadows with no \
+detail, is a failure even if the user asked for "dramatic" or "moody" - those describe mood, \
+not flatness.
+2. OVER-PROCESSING (automatic fail): does the image show the "over-HDR'd" look - halos around \
+edges, unnaturally saturated colors, or an obviously artificial appearance from stacking \
+Contrast/Clarity/Dehaze too hard? Real photos, even cinematic ones, don't look like this.
+3. THE REQUEST: does the result actually do what the user asked (right subject, right \
+direction of change)?
+4. THE INTENSITY LEVEL: does it respect the level's hard limits (given earlier in this \
+prompt)? Overshooting OR undershooting both fail.
+If you cannot clearly tell from the preview whether a masked region rendered correctly (e.g. \
+you were told AI-mask computation wasn't confirmed), say so explicitly rather than guessing - \
+do not approve an edit you're not actually able to verify.
+If all checks pass, reply in one short sentence with NO plan. If something fails, name which \
+check failed in one sentence and propose exactly ONE corrective plan (full-state merge as \
+always, per the PROFESSIONAL EDITING PRINCIPLES above). Never propose a second self-check.
+
 {_SHARED_RULES}"""
 
 
@@ -221,11 +276,16 @@ _AGGRESSIVENESS_GUIDANCE = {
     3: "EDIT INTENSITY 3 (Balanced): a confident grade plus at most some local masks where "
        "they clearly serve the photo. Restraint over spectacle.",
     4: "EDIT INTENSITY 4 (Expressive): stylized grading encouraged - split toning, HSL "
-       "shaping, multiple masks to sculpt light. The edit may read as a 'look'.",
-    5: "EDIT INTENSITY 5 (Cinematic): maximum impact - bold color grading, dramatic tonal "
-       "sculpting, vignette/grain, and SEVERAL local masks (AI sky/subject + gradients) to "
-       "sculpt light regionally. At this level a plan with no MaskGroupBasedCorrections is "
-       "almost certainly too timid.",
+       "shaping, multiple masks to sculpt light. The edit may read as a 'look' - but it must "
+       "still follow the PROFESSIONAL EDITING PRINCIPLES below (no crushed regions, no "
+       "stacked punch sliders).",
+    5: "EDIT INTENSITY 5 (Cinematic): maximum impact via TECHNIQUE, not brute force - bold "
+       "color grading, dramatic tonal sculpting, vignette/grain, and SEVERAL local masks "
+       "(AI sky/subject + gradients) to sculpt light regionally, built the way a colorist "
+       "would per the PROFESSIONAL EDITING PRINCIPLES below. At this level a plan with no "
+       "MaskGroupBasedCorrections is almost certainly too timid - but a plan where any "
+       "region goes flat black/white, or several punch sliders are maxed together, is a "
+       "FAILURE, not 'going big'.",
 }
 
 _AGGRESSIVENESS_CAVEAT = (

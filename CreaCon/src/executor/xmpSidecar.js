@@ -501,6 +501,30 @@ ${lines.join("\n")}${descriptionBody}
 `;
 }
 
+// True if the given settings contain at least one AI mask (Mask/Image) whose
+// deterministic MaskSyncID has no preserved MaskDigest in extras - i.e. ACR
+// has never computed it. `extras` must come from parsing the sidecar as it
+// stood BEFORE this write (the harvested state applyCameraRaw carries
+// forward). A mask whose identity (correction name + index + type + subtype)
+// is unchanged from a previous apply keeps its digest and does NOT need
+// recomputing - only genuinely new/changed AI masks do. Used to decide
+// whether re-opening Camera Raw is actually necessary, instead of opening it
+// any time a plan merely CONTAINS an AI mask (which re-triggers it needlessly
+// on every follow-up apply that just tweaks the same mask's values).
+function hasUncomputedAiMasks(settings, extras) {
+  const corrections = settings.MaskGroupBasedCorrections || [];
+  return corrections.some((correction, ci) => {
+    if (correction.Unsupported) return false;
+    const correctionKey = correction.CorrectionName || `correction-${ci}`;
+    return (correction.CorrectionMasks || []).some((mask, mi) => {
+      if (mask.What !== "Mask/Image") return false;
+      const syncId = stableId(maskSeed(correctionKey, mi, mask.What, mask.MaskSubType));
+      const preserved = (extras && extras.maskAttrs && extras.maskAttrs[syncId]) || null;
+      return !preserved || !preserved.MaskDigest;
+    });
+  });
+}
+
 module.exports = {
   SETTING_KEYS,
   sidecarPathFor,
@@ -509,4 +533,5 @@ module.exports = {
   parse,
   parseFull,
   hashText,
+  hasUncomputedAiMasks,
 };

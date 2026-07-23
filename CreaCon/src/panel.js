@@ -1,13 +1,17 @@
-const { sendChat } = require("./aiClient");
+const { sendChat, runAcrAutoAccept } = require("./aiClient");
 const { validateEditPlan } = require("./validator");
 const { applyEditPlan } = require("./executor/index");
-const { openRawAsSmartObject } = require("./executor/cameraRaw");
+const { openRawAsSmartObject, openInAcrDialog } = require("./executor/cameraRaw");
 const { log, error, formatError } = require("./log");
 
-// Each entry: { role: "user"|"assistant"|"system"|"error", text, plan?, planStatus?, thinking? }
-// role drives bubble styling; plan (if present) renders an Apply/Cancel card.
+// Each entry: { role: "user"|"assistant"|"system"|"error", text, plan?, planStatus?,
+// thinking?, selfCheck? } - role drives bubble styling; plan (if present) renders an
+// Apply/Cancel card; selfCheck tags the automated review turn (loop guard).
 const conversation = [];
 let busy = false;
+// Self-check trial toggle (🔁): after an apply, auto-accept AI masks in ACR
+// and send the rendered result back to the agent for verification.
+let selfCheckEnabled = false;
 
 // JS-driven "Thinking…" animation (UXP doesn't reliably animate CSS ::after).
 let thinkingTimer = null;
@@ -31,6 +35,12 @@ function stopThinking() {
 
 function el(id) {
   return document.getElementById(id);
+}
+
+// "auto" = no aggressiveness guidance sent (the default behavior).
+function currentAggressiveness() {
+  const intensity = el("intensitySelect").value;
+  return intensity === "auto" ? null : Number(intensity);
 }
 
 // Only user/assistant turns are real conversation for the model. "system" notes
@@ -130,11 +140,10 @@ async function onSend() {
 
   try {
     const apiMessages = conversationForApi();
-    // "auto" = no aggressiveness guidance sent (the default behavior).
-    const intensity = el("intensitySelect").value;
-    const aggressiveness = intensity === "auto" ? null : Number(intensity);
-    log("Sending chat,", apiMessages.length, "messages, intensity:", intensity);
-    const { reply, edit_plan } = await sendChat(apiMessages, { aggressiveness });
+    log("Sending chat,", apiMessages.length, "messages, intensity:", el("intensitySelect").value);
+    const { reply, edit_plan } = await sendChat(apiMessages, {
+      aggressiveness: currentAggressiveness(),
+    });
     log("Reply:", reply, "| plan:", edit_plan ? `${edit_plan.steps.length} steps` : "none");
 
     removeMessage(thinkingMsg);
@@ -154,49 +163,165 @@ async function onSend() {
   }
 }
 
-async function onApply(idx) {
-  const msg = conversation[idx];
-  if (!msg || !msg.plan || msg.planStatus) return;
-
+// Shared apply core: validate -> execute -> status. Used by the user-gated
+// Apply button AND the self-check's auto-applied correction, so both paths
+// behave identically (same validation, same "Applied: …" note, same errors).
+// Returns whether it applied AND whether any applyCameraRaw step reported a
+// genuinely uncomputed AI mask (see cameraRaw.hasUncomputedAiMasks) - NOT
+// merely "the plan contains a mask", so a follow-up apply that only tweaks an
+// already-computed mask's values doesn't needlessly reopen Camera Raw.
+async function executeApply(msg) {
   const { valid, errors } = validateEditPlan(msg.plan);
   if (!valid) {
     conversation.push({ role: "error", text: `Plan failed validation: ${errors.join("; ")}` });
     render();
-    return;
+    return { applied: false, needsAiMaskCompute: false };
   }
-
   msg.planStatus = "applying";
   render();
-
+  let needsAiMaskCompute = false;
   try {
-    await applyEditPlan(msg.plan, (i, step) => log(`Step ${i} done:`, step.op));
+    await applyEditPlan(msg.plan, (i, step, result) => {
+      log(`Step ${i} done:`, step.op);
+      if (result && result.needsAiMaskCompute) needsAiMaskCompute = true;
+    });
     msg.planStatus = "applied";
     conversation.push({ role: "system", text: `Applied: ${msg.plan.summary || "the edit"}` });
-    // ACR loads AI mask *parameters* headlessly but may not run the actual
-    // segmentation until nudged (the "Update AI settings" affordance) - warn
-    // the user so an unchanged region isn't mistaken for a failed edit.
-    const usesAiMask = msg.plan.steps.some(
-      (s) =>
-        s.op === "applyCameraRaw" &&
-        (s.params.settings.MaskGroupBasedCorrections || []).some((c) =>
-          (c.CorrectionMasks || []).some((m) => m.What === "Mask/Image")
-        )
-    );
-    if (usesAiMask) {
-      conversation.push({
-        role: "system",
-        text:
-          "Note: this edit uses AI masks (sky/subject/person). If the masked region looks " +
-          "unchanged, click \"Update AI settings\" when Photoshop offers it (or open the " +
-          "layer in Camera Raw once) so the selection is computed.",
-      });
-    }
+    return { applied: true, needsAiMaskCompute };
   } catch (err) {
     error("Apply failed:", err);
     msg.planStatus = undefined; // allow retry
     conversation.push({ role: "error", text: `Error applying edit: ${formatError(err)}` });
+    return { applied: false, needsAiMaskCompute: false };
   } finally {
     render();
+  }
+}
+
+// Runs the ACR "Update AI settings" dialog concurrently with the backend's
+// keyboard-automation worker (which sends Ctrl+Shift+U then Enter once inside
+// it), and reports honestly based on the backend's confirmed result rather
+// than assuming success.
+async function autoAcceptAiMasks(plan) {
+  const acrStep = plan.steps.find((s) => s.op === "applyCameraRaw");
+  conversation.push({
+    role: "system",
+    text: "Computing AI masks in Camera Raw (auto-accept)… please leave keyboard/mouse alone briefly.",
+  });
+  render();
+  try {
+    // Both must start together: opening the dialog and the backend's key
+    // automation race against the same clock (see aiClient.runAcrAutoAccept).
+    const [, acceptResult] = await Promise.all([
+      openInAcrDialog(acrStep && acrStep.params.targetLayer),
+      runAcrAutoAccept(),
+    ]);
+    // Full diagnostic fields, not just the verdict - so a failure is
+    // reportable/diagnosable from the chat alone, no backend terminal needed.
+    log("Auto-accept result:", acceptResult);
+    conversation.push({
+      role: "system",
+      text:
+        (acceptResult.confirmed_closed
+          ? "AI masks updated automatically."
+          : "Could not confirm Camera Raw closed automatically - if the masked region still " +
+            "looks unchanged, open the layer in Camera Raw once and click \"Update AI " +
+            "settings\".") +
+        ` [diagnostic: window_seen=${acceptResult.window_seen}, ` +
+        `sent_hotkey=${acceptResult.sent_hotkey}, sent_enter=${acceptResult.sent_enter}]`,
+    });
+    return acceptResult.confirmed_closed;
+  } catch (err) {
+    error("Auto-accept failed:", err);
+    conversation.push({
+      role: "error",
+      text:
+        `AI-mask auto-accept failed (${formatError(err)}) - open the layer in Camera Raw ` +
+        "and click \"Update AI settings\" if the masked region looks unchanged.",
+    });
+    return false;
+  } finally {
+    render();
+  }
+}
+
+async function onApply(idx) {
+  const msg = conversation[idx];
+  if (!msg || !msg.plan || msg.planStatus) return;
+
+  const { applied, needsAiMaskCompute } = await executeApply(msg);
+  if (!applied) return;
+
+  if (selfCheckEnabled) {
+    let aiComputeConfirmed = true;
+    if (needsAiMaskCompute) aiComputeConfirmed = await autoAcceptAiMasks(msg.plan);
+    await runSelfCheckFlow(aiComputeConfirmed);
+  } else if (needsAiMaskCompute) {
+    conversation.push({
+      role: "system",
+      text:
+        "Note: this edit uses AI masks (sky/subject/person). If the masked region looks " +
+        "unchanged, click \"Update AI settings\" when Photoshop offers it (or open the " +
+        "layer in Camera Raw once) so the selection is computed.",
+    });
+    render();
+  }
+}
+
+// Self-check trial (🔁): sends the freshly rendered snapshot back to the agent
+// to verify the result against the request and the intensity level. Any
+// correction it proposes is applied IMMEDIATELY (no Apply click) - the one
+// deliberate exception to the app's apply-gate, scoped to this opt-in toggle
+// and capped at exactly one round: this function is never called again for
+// whatever it applies (no recursion), so at most one correction ever happens
+// per user-initiated apply.
+async function runSelfCheckFlow(aiComputeConfirmed) {
+  conversation.push({
+    role: "user",
+    text:
+      "[Self-check] The plan was applied; the attached preview is the CURRENT rendered " +
+      "result. Verify it against my original request AND the edit-intensity level in " +
+      "effect, including its hard limits. If both are satisfied, reply in one short " +
+      "sentence with no plan. If something clearly misses, propose ONE corrective plan." +
+      (aiComputeConfirmed
+        ? ""
+        : " NOTE: AI-mask computation could not be confirmed - the preview may not yet " +
+          "reflect a masked region; if a masked area looks unnaturally unchanged rather " +
+          "than clearly wrong, say so instead of guessing."),
+  });
+  const thinkingMsg = { role: "assistant", text: "", thinking: true };
+  conversation.push(thinkingMsg);
+  busy = true;
+  startThinking();
+  render();
+
+  let reply, edit_plan;
+  try {
+    ({ reply, edit_plan } = await sendChat(conversationForApi(), {
+      aggressiveness: currentAggressiveness(),
+    }));
+  } catch (err) {
+    error("Self-check failed:", err);
+    removeMessage(thinkingMsg);
+    conversation.push({ role: "error", text: `Self-check failed: ${formatError(err)}` });
+    busy = false;
+    stopThinking();
+    render();
+    return;
+  }
+  removeMessage(thinkingMsg);
+  busy = false;
+  stopThinking();
+
+  const correctionMsg = { role: "assistant", text: reply || "(no reply)", plan: edit_plan || null };
+  conversation.push(correctionMsg);
+  render();
+  if (!edit_plan) return; // agent confirmed the result - nothing to apply
+
+  // sets planStatus -> renders as a read-only card (no Apply/Cancel - see doc comment above)
+  const result = await executeApply(correctionMsg);
+  if (result.applied && result.needsAiMaskCompute) {
+    await autoAcceptAiMasks(edit_plan); // no further self-check round - see doc comment above
   }
 }
 
@@ -294,6 +419,19 @@ function removeMessage(msg) {
 function setup() {
   el("btnSend").addEventListener("click", onSend);
   el("btnOpenRaw").addEventListener("click", onOpenRaw);
+  el("btnSelfCheck").addEventListener("click", () => {
+    selfCheckEnabled = !selfCheckEnabled;
+    el("btnSelfCheck").setAttribute("variant", selfCheckEnabled ? "cta" : "secondary");
+    conversation.push({
+      role: "system",
+      text: selfCheckEnabled
+        ? "Self-check ON: after each apply, AI masks are auto-accepted in Camera Raw and " +
+          "the agent reviews the rendered result (one refinement proposal max, still gated " +
+          "by Apply)."
+        : "Self-check OFF.",
+    });
+    render();
+  });
   el("chatInput").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();

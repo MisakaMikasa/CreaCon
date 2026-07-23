@@ -1,5 +1,17 @@
 const CHAT_URL = "http://localhost:8000/chat";
+const AUTO_ACCEPT_URL = "http://localhost:8000/acr/auto-accept";
 const { log } = require("./log");
+
+// Drives the Camera Raw dialog (Update All + OK) once it opens. This call is
+// synchronous on the backend and BLOCKS until it finishes (~15-25s) - start it
+// concurrently with opening the ACR dialog (don't await this before that),
+// then Promise.all both. Returns status so the caller can report accurately
+// instead of guessing whether it worked.
+async function runAcrAutoAccept() {
+  const response = await fetch(AUTO_ACCEPT_URL, { method: "POST" });
+  if (!response.ok) throw new Error(`auto-accept failed: ${await response.text()}`);
+  return response.json(); // { window_seen, sent_hotkey, sent_enter, confirmed_closed }
+}
 
 // Exports a small JPEG preview of the current document so the backend can
 // send it to the AI as vision context. Best-effort: if it fails for any
@@ -115,4 +127,4 @@ async function sendChat(messages, options = {}) {
   return response.json();
 }
 
-module.exports = { sendChat, capturePreviewImage };
+module.exports = { sendChat, capturePreviewImage, runAcrAutoAccept };

@@ -29,10 +29,14 @@ function sleep(ms) {
 
 // Runs every step inside a single executeAsModal call so the whole AI edit
 // collapses into one named History Log entry - one Ctrl/Cmd+Z undoes it all,
-// while the created layers/masks remain fully editable afterward.
+// while the created layers/masks remain fully editable afterward. Returns the
+// array of each step's handler return value (most handlers return undefined;
+// applyCameraRaw returns { needsAiMaskCompute, targetLayer } so callers can
+// decide whether AI-mask compute is actually needed - see cameraRaw.js).
 async function applyEditPlan(plan, onStepComplete) {
-  await core.executeAsModal(
+  return core.executeAsModal(
     async () => {
+      const results = [];
       for (let i = 0; i < plan.steps.length; i++) {
         const step = plan.steps[i];
         const handler = HANDLERS[step.op];
@@ -40,16 +44,19 @@ async function applyEditPlan(plan, onStepComplete) {
           throw new Error(`No executor registered for op "${step.op}"`);
         }
         log(`Executing step ${i}: ${step.op}`, step.params);
+        let result;
         try {
-          await handler(step.params);
+          result = await handler(step.params);
         } catch (err) {
           // Re-throw with step context so the panel shows which step broke.
           error(`Step ${i} (${step.op}) failed:`, err);
           throw new Error(`Step ${i} (${step.op}): ${formatError(err)}`);
         }
-        if (onStepComplete) onStepComplete(i, step);
+        results.push(result);
+        if (onStepComplete) onStepComplete(i, step, result);
         await sleep(STEP_DELAY_MS);
       }
+      return results;
     },
     { commandName: plan.summary || "AI Edit" }
   );
