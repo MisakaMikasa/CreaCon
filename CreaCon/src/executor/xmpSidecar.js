@@ -270,6 +270,29 @@ function topLevelLiBlocks(seqText) {
   return blocks;
 }
 
+// Classifies one CorrectionMasks <rdf:li> block. Returns:
+//   { maskAttrs, rangeAttrs: null } - a self-closing geometric/AI mask
+//   { maskAttrs, rangeAttrs: {...} } - a luminance range mask (nested
+//     rdf:Description carrying a self-closing CorrectionRangeMask child)
+//   null - a nested mask form we don't model (brush Dabs, colour-range
+//     PointModels, nested sub-mask groups) -> caller keeps the whole
+//     correction as an opaque verbatim passthrough.
+function classifyMaskBlock(block) {
+  const trimmed = block.trim();
+  // ONLY attribute-only (self-closing) geometric masks are model-editable.
+  // Everything else is preserved verbatim (the whole correction becomes an
+  // opaque passthrough the model can copy forward but not author or edit):
+  //   - nested masks: luminance/colour RANGE masks, brush Dabs, sub-mask groups
+  //   - AI/content masks (Mask/Image)
+  // Range + AI masks are intentionally DISABLED here; the parser/serializer
+  // still carry range-mask support (serializeRangeChild) so re-enabling is just
+  // restoring them in the schema and returning them from this function.
+  if (/<rdf:Description/.test(trimmed)) return null; // any nested mask -> verbatim
+  const maskAttrs = parseAttrs(trimmed);
+  if (maskAttrs.What === "Mask/Image" || maskAttrs.What === "Mask/RangeMask") return null;
+  return { maskAttrs, rangeAttrs: null }; // self-closing geometric mask
+}
+
 // --- parsing -------------------------------------------------------------------
 
 function parseFlatSettings(xml) {
@@ -296,14 +319,17 @@ function parseCorrection(liBlock, index, extras) {
   const descClose = liBlock.lastIndexOf("</rdf:Description>");
   const inner = liBlock.slice(liBlock.indexOf(descOpen[0]) + descOpen[0].length, descClose);
 
-  // Supported = the ONLY child element is CorrectionMasks whose items are all
-  // attribute-only (self-closing) rdf:li masks. Anything else (local curves,
-  // brush Dabs, range masks, point colors) -> opaque verbatim passthrough.
+  // Supported = the only child element is CorrectionMasks whose items are each
+  // either an attribute-only (self-closing) mask (gradient/radial/AI) or a
+  // luminance range mask (nested Description + a CorrectionRangeMask child).
+  // Anything else (brush Dabs, colour-range PointModels, nested sub-mask
+  // groups, local curves) -> opaque verbatim passthrough.
   const cm = extractElement(inner, "crs:CorrectionMasks");
   const remainder = cm ? inner.replace(cm.outer, "") : inner;
-  const maskLis = cm ? cm.inner.match(/<rdf:li\b[^>]*\/>/g) || [] : [];
-  const maskCount = cm ? (cm.inner.match(/<rdf:li\b/g) || []).length : 0;
-  const supported = cm !== null && !/<\w/.test(remainder) && maskLis.length === maskCount && maskLis.length > 0;
+  const blocks = cm ? topLevelLiBlocks(cm.inner) : [];
+  const classified = blocks.map(classifyMaskBlock);
+  const supported =
+    cm !== null && !/<\w/.test(remainder) && blocks.length > 0 && classified.every(Boolean);
 
   if (!supported) {
     extras.opaqueByName[name] = liBlock;
@@ -320,17 +346,31 @@ function parseCorrection(liBlock, index, extras) {
   }
   if (Object.keys(preservedCorr).length) extras.correctionAttrs[detCorrId] = preservedCorr;
 
-  correction.CorrectionMasks = maskLis.map((liTag, mi) => {
-    const maskAttrs = parseAttrs(liTag);
+  correction.CorrectionMasks = classified.map(({ maskAttrs, rangeAttrs }, mi) => {
     const mask = {};
     const preservedMask = {};
     for (const [key, value] of Object.entries(maskAttrs)) {
       if (MASK_KEYS.includes(key)) mask[key] = coerce(value);
-      else preservedMask[key] = value; // MaskSyncID, Version, digests, geometry extras...
+      else preservedMask[key] = value; // MaskSyncID, MaskActive, Version, digests...
     }
-    if (Object.keys(preservedMask).length) {
-      const detMaskId = stableId(maskSeed(correctionKey, mi, maskAttrs.What, maskAttrs.MaskSubType));
-      extras.maskAttrs[detMaskId] = preservedMask;
+    const detMaskId = stableId(maskSeed(correctionKey, mi, maskAttrs.What, maskAttrs.MaskSubType));
+    if (Object.keys(preservedMask).length) extras.maskAttrs[detMaskId] = preservedMask;
+
+    // Luminance range mask: expose Type/LumRange/Invert to the model, and
+    // preserve ACR's computed Version/SampleType/LuminanceDepthSampleInfo as
+    // extras so a byte-faithful copy round-trips even though the model can't
+    // author those.
+    if (rangeAttrs) {
+      const rc = {};
+      const preservedRange = {};
+      for (const [key, value] of Object.entries(rangeAttrs)) {
+        if (key === "Type") rc.Type = coerce(value);
+        else if (key === "Invert") rc.Invert = coerce(value);
+        else if (key === "LumRange") rc.LumRange = value.trim().split(/\s+/).map(Number);
+        else preservedRange[key] = value; // Version, SampleType, LuminanceDepthSampleInfo
+      }
+      mask.CorrectionRangeMask = rc;
+      if (Object.keys(preservedRange).length) extras.rangeMaskAttrs[detMaskId] = preservedRange;
     }
     return mask;
   });
@@ -339,7 +379,14 @@ function parseCorrection(liBlock, index, extras) {
 }
 
 function emptyExtras() {
-  return { rootAttrs: {}, rootElements: [], correctionAttrs: {}, maskAttrs: {}, opaqueByName: {} };
+  return {
+    rootAttrs: {},
+    rootElements: [],
+    correctionAttrs: {},
+    maskAttrs: {},
+    rangeMaskAttrs: {},
+    opaqueByName: {},
+  };
 }
 
 // Full-fidelity read: { settings, extras }. `settings` is what the model sees
@@ -388,6 +435,63 @@ function parse(xml) {
 // masks as attribute-only rdf:li items. extras re-attaches preserved
 // attributes (they win over ours - e.g. ACR's refined ReferencePoint and its
 // original SyncIDs for manual masks) and emits opaque corrections verbatim.
+// A luminance range mask's <crs:CorrectionRangeMask> child. The model supplies
+// Type/LumRange/Invert; Version/SampleType/LuminanceDepthSampleInfo come from
+// preserved extras (ACR-computed) when round-tripping, or from these defaults
+// for a freshly authored mask.
+function serializeRangeChild(range, preserved) {
+  const withDefaults = { Version: 4, Type: 2, Invert: false, SampleType: 2, ...range, ...(preserved || {}) };
+  const attrs = Object.entries(withDefaults).map(([key, value]) => {
+    if (key === "LumRange") {
+      const s = Array.isArray(value) ? value.map((n) => Number(n).toFixed(6)).join(" ") : String(value);
+      return `crs:LumRange="${s}"`;
+    }
+    if (typeof value === "boolean") return `crs:${key}="${value}"`;
+    if (typeof value === "number")
+      return `crs:${key}="${Number.isInteger(value) ? value : value.toFixed(6)}"`;
+    return `crs:${key}="${escapeXml(value)}"`;
+  });
+  return `         <crs:CorrectionRangeMask\n          ${attrs.join("\n          ")}/>`;
+}
+
+// One mask -> its <rdf:li>. Geometric/AI masks are attribute-only self-closing
+// lis; a luminance range mask nests an rdf:Description carrying the
+// CorrectionRangeMask child. Deterministic MaskSyncID + preserved extras keep
+// ACR's cached digests/IDs attached across rewrites.
+function serializeMask(mask, mi, correctionKey, extras) {
+  const isRadial = mask.What === "Mask/CircularGradient";
+  const isRange = mask.What === "Mask/RangeMask";
+  const detMaskId = stableId(maskSeed(correctionKey, mi, mask.What, mask.MaskSubType));
+  const withMaskDefaults = {
+    MaskActive: true,
+    MaskBlendMode: 0,
+    MaskInverted: false,
+    // Intersect/range components store MaskValue 0 in ACR ground truth; add
+    // masks store 1.
+    MaskValue: isRange ? 0 : 1,
+    ...(isRadial
+      ? { Angle: 0, Midpoint: 50, Roundness: 0, Feather: 50, Flipped: true, Version: "2" }
+      : {}),
+    MaskSyncID: detMaskId,
+    ...mask,
+    ...(extras.maskAttrs[detMaskId] || {}),
+  };
+  // CorrectionRangeMask is a child element, not an attribute - pull it aside.
+  const rangeChild = withMaskDefaults.CorrectionRangeMask;
+  delete withMaskDefaults.CorrectionRangeMask;
+  const attrLines = Object.entries(withMaskDefaults).map(([k, v]) => maskAttr(k, v));
+
+  if (isRange) {
+    return `        <rdf:li>
+         <rdf:Description
+          ${attrLines.join("\n          ")}>
+${serializeRangeChild(rangeChild || {}, extras.rangeMaskAttrs[detMaskId])}
+         </rdf:Description>
+        </rdf:li>`;
+  }
+  return `        <rdf:li\n         ${attrLines.join("\n         ")}/>`;
+}
+
 function serializeMasks(corrections, extras) {
   const correctionItems = corrections
     .map((correction, ci) => {
@@ -413,27 +517,7 @@ function serializeMasks(corrections, extras) {
       }
 
       const maskItems = (correction.CorrectionMasks || [])
-        .map((mask, mi) => {
-          const isRadial = mask.What === "Mask/CircularGradient";
-          const detMaskId = stableId(maskSeed(correctionKey, mi, mask.What, mask.MaskSubType));
-          const withMaskDefaults = {
-            MaskActive: true,
-            MaskBlendMode: 0,
-            MaskInverted: false,
-            MaskValue: 1,
-            // Radial conventions from ACR ground truth: Flipped=true means the
-            // effect is INSIDE the ellipse (the normal case - omitting it put
-            // the effect outside, which read as "mask not applied").
-            ...(isRadial
-              ? { Angle: 0, Midpoint: 50, Roundness: 0, Feather: 50, Flipped: true, Version: "2" }
-              : {}),
-            MaskSyncID: detMaskId,
-            ...mask,
-            ...(extras.maskAttrs[detMaskId] || {}),
-          };
-          const maskAttrs = Object.entries(withMaskDefaults).map(([k, v]) => maskAttr(k, v));
-          return `        <rdf:li\n         ${maskAttrs.join("\n         ")}/>`;
-        })
+        .map((mask, mi) => serializeMask(mask, mi, correctionKey, extras))
         .join("\n");
 
       return `    <rdf:li>

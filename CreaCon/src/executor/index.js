@@ -27,14 +27,42 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Each applyCameraRaw carries the COMPLETE develop state (the full-state rule),
+// so when a plan has several targeting the SAME raw layer - e.g. the model
+// builds the edit up mask-by-mask, emitting a cumulative full state each time -
+// only the LAST one matters. The earlier ones produce identical intermediate
+// results but each triggers its own sidecar rewrite + ACR relink, and every
+// relink reopens the Camera Raw dialog for a manual OK. Drop the superseded
+// ones so a multi-mask raw edit applies in a single reload (one dialog, not N).
+function coalesceCameraRawSteps(steps) {
+  const lastIndexByTarget = new Map();
+  steps.forEach((step, i) => {
+    if (step.op !== "applyCameraRaw") return;
+    const key = (step.params && step.params.targetLayer) || "__single_raw__";
+    lastIndexByTarget.set(key, i);
+  });
+  return steps.filter((step, i) => {
+    if (step.op !== "applyCameraRaw") return true;
+    const key = (step.params && step.params.targetLayer) || "__single_raw__";
+    return lastIndexByTarget.get(key) === i;
+  });
+}
+
 // Runs every step inside a single executeAsModal call so the whole AI edit
 // collapses into one named History Log entry - one Ctrl/Cmd+Z undoes it all,
 // while the created layers/masks remain fully editable afterward.
 async function applyEditPlan(plan, onStepComplete) {
+  const steps = coalesceCameraRawSteps(plan.steps);
+  if (steps.length < plan.steps.length) {
+    log(
+      `Coalesced ${plan.steps.length - steps.length} superseded applyCameraRaw step(s); ` +
+        "applying the final develop state in a single reload."
+    );
+  }
   await core.executeAsModal(
     async () => {
-      for (let i = 0; i < plan.steps.length; i++) {
-        const step = plan.steps[i];
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
         const handler = HANDLERS[step.op];
         if (!handler) {
           throw new Error(`No executor registered for op "${step.op}"`);

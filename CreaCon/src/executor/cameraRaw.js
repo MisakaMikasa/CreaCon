@@ -51,6 +51,19 @@ async function readTextFileIfExists(nativePath) {
   }
 }
 
+// Best-effort delete (used when the user picks "start fresh" - we remove the old
+// sidecar instead of backing it up). Missing file / delete failure is non-fatal.
+async function removeFileIfExists(nativePath) {
+  try {
+    const entry = await entryForPath(nativePath);
+    if (entry && entry.delete) await entry.delete();
+    return true;
+  } catch (err) {
+    log("removeFileIfExists: nothing to delete or delete failed:", formatError(err));
+    return false;
+  }
+}
+
 // --- ingestion (the panel's "Open RAW" button) -------------------------------
 
 // Lets the user pick a raw, places it as a LINKED smart object, and registers
@@ -101,7 +114,6 @@ async function openRawAsSmartObject(report, askChoice) {
   const existingXml = await readTextFileIfExists(sidecarPath);
   let previousSettings = null;
   let keptExisting = false;
-  let backupPath = null;
   const previousHadMasks =
     existingXml !== null && existingXml.includes("MaskGroupBasedCorrections");
   if (existingXml !== null) {
@@ -112,12 +124,12 @@ async function openRawAsSmartObject(report, askChoice) {
       return null;
     }
     if (choice === "fresh") {
-      // Timestamped so repeated fresh imports never destroy older backups
-      // (the oldest one is often the most precious - original LR edits).
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      backupPath = `${sidecarPath}.creacon-prev-${stamp}`;
-      await writeTextFile(backupPath, existingXml);
+      // The user chose fresh, so DISCARD the old sidecar outright - no backup
+      // file is kept (previous settings are still reported to the chat below so
+      // they can be re-applied this session if wanted). Delete the .xmp, then
+      // write camera defaults so ACR develops from a known clean state at place.
       previousSettings = parse(existingXml);
+      await removeFileIfExists(sidecarPath);
       await writeTextFile(sidecarPath, serialize({}));
     } else {
       // "keep": leave the sidecar untouched; ACR applies it at place time and
@@ -167,11 +179,11 @@ async function openRawAsSmartObject(report, askChoice) {
     // The settings JSON goes into the chat, so the model can restore them
     // through a normal applyCameraRaw when asked.
     report(
-      "This raw had previous develop settings - they were set aside so you start fresh " +
-        `(backup: ${backupPath}). Say "restore the previous edits" to bring ` +
-        `them back. Previous settings: ${JSON.stringify(previousSettings)}` +
+      "This raw had previous develop settings - they were discarded so you start fresh " +
+        '(no backup kept). Say "restore the previous edits" to re-apply them from the ' +
+        `values below this session. Previous settings: ${JSON.stringify(previousSettings)}` +
         (previousHadMasks
-          ? " (they also included local masks, which live only in the backup file for now)."
+          ? " (they also included local masks, which are not preserved once discarded)."
           : "")
     );
   } else if (keptExisting) {

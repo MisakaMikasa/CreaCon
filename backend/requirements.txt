@@ -3,6 +3,8 @@ uvicorn[standard]
 jsonschema
 pydantic
 python-dotenv
+Pillow
+numpy
 
 # Pick the SDK(s) for the provider(s) you'll actually use (LLM_PROVIDER in .env)
 anthropic

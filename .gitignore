@@ -2,6 +2,7 @@ backend/.env
 backend/.venv/
 backend/__pycache__/
 backend/**/__pycache__/
+backend/debug_overlays/
 *.pyc
 
 node_modules/
