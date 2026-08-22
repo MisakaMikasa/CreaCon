@@ -114,9 +114,79 @@ const UNSIGNED_KEYS = new Set([
   "GrainAmount",
 ]);
 
+// --- geometry (crop / straighten / perspective) --------------------------------
+//
+// Deliberately NOT part of SETTING_KEYS. `settings` is full-state: whatever the
+// model emits REPLACES the develop state entirely, so a plain "make it warmer"
+// that omitted the crop keys would silently un-crop the photo. Geometry is a
+// third category instead - parsed out, carried forward untouched on every normal
+// apply, and replaced only by an explicit geometry write.
+//
+// These also can't go through formatValue(): ACR writes crop bounds as 6-decimal
+// floats, HasCrop as "True"/"False", and flags as bare 0/1, none of which match
+// the signed-integer convention the Basic-panel sliders use. Formats verified
+// against real ACR sidecars (DSCF0919/DSCF0929, ACR 18.4).
+const GEOMETRY_KEYS = {
+  LensProfileSetup: "string", //           "LensDefaults" - lets ACR pick the profile
+  HasCrop: "bool", //                      "True" / "False"
+  CropTop: "float6", //                    0..1, in the CropAngle-rotated frame
+  CropLeft: "float6",
+  CropBottom: "float6",
+  CropRight: "float6",
+  CropAngle: "angle", //                   degrees, signed, e.g. "-16.5"
+  CropConstrainToWarp: "flag", //          keep the crop inside a warped result
+  CropConstrainToUnitSquare: "flag", //    keep the crop inside the image
+  PerspectiveUpright: "int", //            0 off, 1 auto, 2 level, 3 vertical, 4 full
+  LensProfileEnable: "flag", //            Optics > "Use profile corrections"
+  AutoLateralCA: "flag", //                Optics > "Remove chromatic aberration"
+  LensManualDistortionAmount: "int",
+};
+
+// ACR recomputes Upright from PerspectiveUpright, but caches the result in these
+// keys keyed by UprightDependentDigest. They are normally preserved as extras
+// (like AI-mask digests); they must be DROPPED whenever geometry changes, or ACR
+// replays a transform it fitted to different settings. UprightTransform_N is one
+// cached matrix per mode (0=Off .. 5=Guided), hence the numeric suffix.
+const UPRIGHT_CACHE_RE = /^Upright(Version|CenterMode|CenterNormX|CenterNormY|FocalMode|FocalLength35mm|Preview|DependentDigest|TransformCount|Transform_\d+|FourSegments_\d+)$/;
+
+// ACR's own defaults for a freshly imported raw. Writing a sidecar at all makes
+// ACR treat it as authoritative, which SUPPRESSES the lens correction it would
+// otherwise enable on import - so an empty sidecar silently ships a distorted,
+// vignetted photo. These two keys restore parity with opening the raw normally;
+// ACR fills in the profile name/digest itself from the file's embedded data.
+const DEFAULT_GEOMETRY = {
+  LensProfileEnable: true, //  Optics > "Use profile corrections"
+  LensProfileSetup: "LensDefaults",
+  AutoLateralCA: true, //      Optics > "Remove chromatic aberration"
+};
+
+function formatGeometryValue(kind, value) {
+  switch (kind) {
+    case "string":
+      return escapeXml(value);
+    case "bool":
+      return value ? "True" : "False";
+    case "flag":
+      return value ? "1" : "0";
+    case "int":
+      return String(Math.round(Number(value)));
+    case "float6":
+      return Number(value).toFixed(6);
+    case "angle": {
+      // ACR writes the shortest faithful form ("-3.5", "-16.5", "0.0"), so trim
+      // trailing zeros but always keep one decimal place.
+      const text = Number(value).toFixed(4).replace(/(\.\d*?)0+$/, "$1");
+      return text.endsWith(".") ? `${text}0` : text;
+    }
+    default:
+      return String(value);
+  }
+}
+
 // Root attrs we own or that must not be duplicated from a parsed file.
 const ROOT_ATTR_EXCLUDE = new Set([
   ...SETTING_KEYS,
+  ...Object.keys(GEOMETRY_KEYS),
   "Version",
   "ProcessVersion",
   "CompatibleVersion",
@@ -195,12 +265,6 @@ function stableId(seed) {
     out += (h >>> 0).toString(16).padStart(8, "0");
   }
   return out.toUpperCase();
-}
-
-// Content hash for external-change detection (did something other than
-// CreaCon rewrite the sidecar since we last wrote it?).
-function hashText(text) {
-  return stableId(`hash:${text.length}:${text}`);
 }
 
 function correctionSeed(name, index) {
@@ -306,6 +370,59 @@ function parseFlatSettings(xml) {
     if (Number.isFinite(num) && settings[key] === undefined) settings[key] = num;
   }
   return settings;
+}
+
+// Geometry state as a plain object, typed back from ACR's string forms. Absent
+// keys stay absent (rather than defaulting) so "no crop set" is distinguishable
+// from "crop covers the whole frame" - they render the same but only the second
+// pins the aspect ratio.
+function parseGeometry(xml) {
+  const geometry = {};
+  const rootOpen = xml.match(/<rdf:Description\b[^>]*>/);
+  if (!rootOpen) return geometry;
+  for (const [key, value] of Object.entries(parseAttrs(rootOpen[0]))) {
+    const kind = GEOMETRY_KEYS[key];
+    if (!kind) continue;
+    if (kind === "string") geometry[key] = value;
+    else if (kind === "bool") geometry[key] = /^true$/i.test(value);
+    else if (kind === "flag") geometry[key] = value === "1" || /^true$/i.test(value);
+    else {
+      const num = Number(String(value).replace(/^\+/, ""));
+      if (Number.isFinite(num)) geometry[key] = num;
+    }
+  }
+  return geometry;
+}
+
+// ACR's cached Upright homographies, one per mode, as UprightTransform_N. The
+// index IS the PerspectiveUpright mode: 0 Off, 1 Auto, 2 Level, 3 Vertical,
+// 4 Full, 5 Guided - confirmed on real files where _0 and _5 are identity (Off,
+// and Guided with no guides drawn) while _1.._4 carry real transforms.
+//
+// ACR writes all six on the first Upright apply, so after that a mode SWITCH is
+// fully predictable; only the first correction is blind.
+function parseUprightTransforms(xml) {
+  const out = [];
+  const re = /crs:UprightTransform_(\d+)="([^"]*)"/g;
+  let m;
+  while ((m = re.exec(xml)) !== null) {
+    const values = m[2].split(",").map((n) => Number(n.trim()));
+    if (values.length === 9 && values.every(Number.isFinite)) out[Number(m[1])] = values;
+  }
+  return out;
+}
+
+// The homography currently in effect, or null when Upright is off / not computed
+// yet. Maps SENSOR space -> the warped image (verified twice: warping a stored
+// mask by it reproduces the line the user actually drew).
+//
+// Not-yet-computed is the normal state before the first apply, and is exactly why
+// geometry can never share a turn with masking: there is nothing to convert
+// against until ACR has run.
+function activeUprightTransform(xml) {
+  const mode = Number((xml.match(/crs:PerspectiveUpright="(\d+)"/) || [])[1]);
+  if (!Number.isFinite(mode) || mode === 0) return null;
+  return parseUprightTransforms(xml)[mode] || null;
 }
 
 // One correction rdf:li block -> model-visible correction (or Unsupported
@@ -420,7 +537,19 @@ function parseFull(xml) {
     if (corrections.length) settings.MaskGroupBasedCorrections = corrections;
   }
 
-  return { settings, extras };
+  return { settings, extras, geometry: parseGeometry(xml) };
+}
+
+// Strips ACR's cached Upright computation from extras. Call this whenever
+// geometry changes: the cache is keyed by UprightDependentDigest and carrying it
+// across a geometry edit makes ACR replay a transform fitted to the old state.
+// Everything else in extras (AI-mask digests, unmodelled sliders) is untouched.
+function withoutUprightCache(extras) {
+  const rootAttrs = {};
+  for (const [key, value] of Object.entries(extras.rootAttrs || {})) {
+    if (!UPRIGHT_CACHE_RE.test(key)) rootAttrs[key] = value;
+  }
+  return { ...extras, rootAttrs };
 }
 
 // Flat-only convenience (import notes, spikes).
@@ -454,11 +583,86 @@ function serializeRangeChild(range, preserved) {
   return `         <crs:CorrectionRangeMask\n          ${attrs.join("\n          ")}/>`;
 }
 
+// A content/segment mask applied as an ACR brush: a Mask/Aggregate wrapping a
+// Mask/Paint whose Dabs FILL the region (one soft stamp per tiled point). Dab
+// commands are "r <radius>" / "f <flow>" / "d <x> <y>" (x first - unlike polygon
+// points). The backend (segment_resolve.py) has already turned the Segment into
+// concrete Dabs/Radius before this runs.
+function serializePaintMask(mask, mi, correctionKey) {
+  const aggId = stableId(maskSeed(correctionKey, mi, "Mask/Aggregate", ""));
+  const paintId = stableId(maskSeed(correctionKey, mi, "Mask/Paint", ""));
+  const dabs = Array.isArray(mask.Dabs) ? mask.Dabs : [];
+  // Dabs are [x, y, r] with a PER-DAB radius (greedy fill uses many sizes). The
+  // Mask/Paint's own Radius attr is just a representative (median).
+  const dabR = (pt) =>
+    pt.length > 2 && typeof pt[2] === "number" ? pt[2] : typeof mask.Radius === "number" ? mask.Radius : 0.02;
+  const radii = dabs.map(dabR).sort((a, b) => a - b);
+  const radius = radii.length ? radii[Math.floor(radii.length / 2)] : 0.02;
+  const flow = typeof mask.Flow === "number" ? mask.Flow : 1;
+  const centerWeight = typeof mask.CenterWeight === "number" ? mask.CenterWeight : 0;
+  const blend = typeof mask.MaskBlendMode === "number" ? mask.MaskBlendMode : 0;
+  const inverted = mask.MaskInverted === true;
+  const value = typeof mask.MaskValue === "number" ? mask.MaskValue : 1;
+
+  const aggAttrs = {
+    What: "Mask/Aggregate",
+    MaskActive: true,
+    MaskName: mask.MaskName || "Brush",
+    MaskBlendMode: blend,
+    MaskInverted: inverted,
+    MaskSyncID: aggId,
+    MaskValue: value,
+  };
+  const paintAttrs = {
+    What: "Mask/Paint",
+    MaskActive: true,
+    MaskBlendMode: 0,
+    MaskInverted: false,
+    MaskSyncID: paintId,
+    MaskValue: 1,
+    Radius: radius,
+    Flow: flow,
+    CenterWeight: centerWeight,
+  };
+
+  const dabLines = [
+    `          <rdf:li>r ${radius.toFixed(6)}</rdf:li>`,
+    `          <rdf:li>f ${Number(flow).toFixed(4)}</rdf:li>`,
+  ];
+  for (const pt of dabs) {
+    dabLines.push(`          <rdf:li>r ${Number(dabR(pt)).toFixed(6)}</rdf:li>`);
+    dabLines.push(`          <rdf:li>d ${Number(pt[0]).toFixed(6)} ${Number(pt[1]).toFixed(6)}</rdf:li>`);
+  }
+
+  const aggStr = Object.entries(aggAttrs).map(([k, v]) => maskAttr(k, v));
+  const paintStr = Object.entries(paintAttrs).map(([k, v]) => maskAttr(k, v));
+  return `        <rdf:li>
+         <rdf:Description
+          ${aggStr.join("\n          ")}>
+          <crs:Masks>
+           <rdf:Seq>
+            <rdf:li>
+             <rdf:Description
+              ${paintStr.join("\n              ")}>
+              <crs:Dabs>
+               <rdf:Seq>
+${dabLines.join("\n")}
+               </rdf:Seq>
+              </crs:Dabs>
+             </rdf:Description>
+            </rdf:li>
+           </rdf:Seq>
+          </crs:Masks>
+         </rdf:Description>
+        </rdf:li>`;
+}
+
 // One mask -> its <rdf:li>. Geometric/AI masks are attribute-only self-closing
 // lis; a luminance range mask nests an rdf:Description carrying the
 // CorrectionRangeMask child. Deterministic MaskSyncID + preserved extras keep
 // ACR's cached digests/IDs attached across rewrites.
 function serializeMask(mask, mi, correctionKey, extras) {
+  if (mask.What === "Mask/Paint") return serializePaintMask(mask, mi, correctionKey);
   const isRadial = mask.What === "Mask/CircularGradient";
   const isRange = mask.What === "Mask/RangeMask";
   const detMaskId = stableId(maskSeed(correctionKey, mi, mask.What, mask.MaskSubType));
@@ -545,7 +749,7 @@ ${correctionItems}
 // here (the model merges; see the full-state rule in backend/prompt.py).
 // extras (from parseFull of the current sidecar) carries forward everything
 // the model doesn't manage.
-function serialize(settings, extras = emptyExtras()) {
+function serialize(settings, extras = emptyExtras(), geometry = {}) {
   const lines = [];
   for (const key of SETTING_KEYS) {
     if (settings[key] !== undefined && settings[key] !== null) {
@@ -555,6 +759,14 @@ function serialize(settings, extras = emptyExtras()) {
   // Temperature/Tint are ignored by ACR unless WhiteBalance is "Custom".
   if (settings.Temperature !== undefined || settings.Tint !== undefined) {
     lines.push('    crs:WhiteBalance="Custom"');
+  }
+  // Geometry rides alongside the sliders as ordinary root attrs, but is passed
+  // separately so a normal develop apply can carry it forward verbatim instead
+  // of dropping the crop (see GEOMETRY_KEYS).
+  for (const [key, kind] of Object.entries(GEOMETRY_KEYS)) {
+    if (geometry[key] !== undefined && geometry[key] !== null) {
+      lines.push(`    crs:${key}="${formatGeometryValue(kind, geometry[key])}"`);
+    }
   }
   // Preserved root attrs (already XML-escaped - they came out of valid XML).
   for (const [key, value] of Object.entries(extras.rootAttrs || {})) {
@@ -587,10 +799,15 @@ ${lines.join("\n")}${descriptionBody}
 
 module.exports = {
   SETTING_KEYS,
+  GEOMETRY_KEYS,
+  DEFAULT_GEOMETRY,
   sidecarPathFor,
   serialize,
   serializeMasks,
   parse,
   parseFull,
-  hashText,
+  parseGeometry,
+  parseUprightTransforms,
+  activeUprightTransform,
+  withoutUprightCache,
 };

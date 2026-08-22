@@ -127,12 +127,34 @@ Limitations:
   path orphans the mapping — re-import via 📷 in that case.
 - Import applies no edits of its own; when a raw arrives with existing develop settings,
   the user chooses at import time to keep them (fully read back, masks included) or start
-  fresh (timestamped backup + restorable via chat).
+  fresh. "Fresh" DISCARDS the old sidecar outright - no backup file is written; the previous
+  settings are only reported into the chat, so they can be re-applied that session by asking.
 - Ctrl+Z undoes the visual change but not the sidecar file; the model always sees the
   sidecar's current state and can revert by re-applying previous settings.
 - Requires ACR preference "Save image settings in: **Sidecar '.xmp' files**".
-- Manual edits (ACR dialog on the linked layer, or Lightroom) are detected via a content
-  hash and merged: the sidecar on disk is always the truth, masks included. Manual
+- **Edits made in the Camera Raw dialog that pops during an apply are DISCARDED until the
+  layer has been opened for editing at least once.** Isolated by experiment:
+
+  | sequence | ACR writes the sidecar? |
+  |---|---|
+  | apply -> edit in dialog -> apply -> edit in dialog | no, no |
+  | apply -> edit in dialog -> **double-click layer + edit** -> apply -> edit in dialog | no, **yes** |
+
+  So it is not a first-apply effect - repeated applies keep failing. What unlocks it is one
+  real editing session: ACR appears to write settings back only for a file it has a session
+  for, and the relink dialog alone is an *import*, so its settings go into that placement
+  and nowhere else. Double-clicking is Photoshop's smart-object edit path, which does
+  establish the association; afterwards the relink dialog inherits it.
+
+  **Fixed:** `establishAcrSession()` opens the raw into Camera Raw once during import
+  (`placedLayerEditContents`, the scripted double-click) purely to register the file. OK-ing
+  it with no changes is enough, and dialog edits are persisted from then on. That is what
+  the extra Camera Raw window at import is for - **do not remove it**, or every manual
+  adjustment made during an apply goes back to being silently discarded. `reloadRaw` logs
+  `ACR wrote back: YES/NO` after every relink as the detector; a "NO" means it has regressed.
+- Manual edits (double-clicking the linked layer into ACR, or Lightroom) are picked up by
+  re-reading the sidecar every turn and merged: the sidecar on disk is always the truth,
+  masks included. Manual
   adjustments CreaCon can't model (brush strokes, range masks, local curves, local color
   grading) are preserved verbatim across applies and surfaced to the AI as
   `"Unsupported": true` corrections it must copy forward.
@@ -225,6 +247,23 @@ own pre-execution check — three consumers, one definition, no drift.
 
 ## Known limitations / roadmap
 
+- **The panel freezes while an edit applies, and this is not fixable from inside the panel.**
+  Every apply runs in `core.executeAsModal`, and per Adobe: *"When Photoshop is in a modal
+  state during executeAsModal() the entire UI thread is blocked. Mouse clicks cannot be
+  processed at all."* So during an apply no button anywhere in the panel responds — not just
+  the one you pressed — and the freeze lasts as long as Camera Raw takes to re-develop the
+  raw, which is seconds for a 26MP file.
+
+  What has been done: the `STEP_DELAY_MS` stagger no longer runs after the *last* step (it
+  was adding a pointless 400 ms freeze to every single-step apply), and `busy` now renders
+  every card's buttons disabled during an apply, so the freeze reads as "wait" rather than
+  "broken". Neither makes Photoshop faster.
+
+  What would NOT fix it: moving the UI to an external window. Adobe supports that (WebSocket
+  to a desktop helper), and the window would stay responsive — but the work still runs
+  through `executeAsModal`, the bridge plugin is still blocked while it does, and the edit
+  takes exactly as long. It buys feedback, not speed. The stronger argument for an external
+  UI is UXP's partial DOM (no `composedPath()`, Spectrum upgrade timing) rather than this.
 - No pixel-level or content-aware edits by design — the agent's vocabulary is intentionally
   the non-destructive toolset (this is a feature, but means no healing/retouch ops).
 - The model sees the *composited* canvas, not per-layer thumbnails, so it can't visually

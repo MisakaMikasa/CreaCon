@@ -56,7 +56,16 @@ async function saveToDisk() {
     // survive the session.
     const persistable = {};
     for (const [docKey, layers] of Object.entries(store)) {
-      if (!docKey.startsWith("unsaved:")) persistable[docKey] = layers;
+      if (docKey.startsWith("unsaved:")) continue;
+      // Checkpoints are whole sidecars (tens of KB each) and this file is
+      // rewritten on every settings update - keep them in memory only. They are
+      // session-scoped by design; see saveCheckpoint.
+      persistable[docKey] = Object.fromEntries(
+        Object.entries(layers).map(([layerId, entry]) => {
+          const { checkpoints, ...rest } = entry;
+          return [layerId, rest];
+        })
+      );
     }
     const folder = await localFileSystem.getDataFolder();
     const file = await folder.createFile(REGISTRY_FILE, { overwrite: true });
@@ -66,28 +75,77 @@ async function saveToDisk() {
   }
 }
 
-async function register(doc, layerId, rawPath) {
+// `aspect` is the raw's width/height as placed, before any crop. Mask
+// coordinates are normalized to different axis lengths, so converting them
+// between the preview and the sensor needs the frame's proportions whenever a
+// rotated crop is involved (at CropAngle 0 the aspect cancels out entirely).
+// Recorded once at import because the placed layer is uncropped at that moment.
+async function register(doc, layerId, rawPath, aspect) {
   await ensureLoaded();
   const key = docKeyFor(doc);
   if (!store[key]) store[key] = {};
-  store[key][layerId] = { rawPath, lastSettings: null };
+  store[key][layerId] = { rawPath, lastSettings: null, aspect: aspect || null };
   await saveToDisk();
 }
 
-// Caches the model-visible settings after a successful apply (or after
-// adopting an externally-edited sidecar), plus a hash of the sidecar content
-// those settings correspond to. When the sidecar on disk no longer matches
-// syncedHash, someone else (the user in ACR, Lightroom) edited it - the
-// executor then re-parses the file and calls this again to adopt it.
-async function updateSettings(doc, layerId, settings, syncedHash) {
+// Records the model-visible settings after a successful apply. This is only a
+// FALLBACK for when the sidecar has gone missing from disk - the file itself is
+// the source of truth and is re-parsed every turn. (A hash was stored here once,
+// to let listRawLayers skip re-parsing when the file was unchanged; that fast
+// path is gone, because it could pin a bad cache entry in place permanently.)
+async function updateSettings(doc, layerId, settings) {
   await ensureLoaded();
   const entry = (store[docKeyFor(doc)] || {})[layerId];
   if (entry) {
     entry.lastSettings = settings;
-    if (syncedHash !== undefined) entry.syncedHash = syncedHash;
+    delete entry.syncedHash; // drop the field from registries written earlier
     await saveToDisk();
   }
 }
+
+// --- checkpoints ----------------------------------------------------------------
+//
+// Every apply first saves the sidecar bytes it is about to overwrite, tagged with
+// an id. Restoring is then an EXACT replay of a specific saved state rather than
+// "undo the last thing" - which was the old behaviour and was ambiguous the
+// moment you did anything after the edit you meant to take back.
+//
+// SESSION-SCOPED and memory-only. A sidecar is tens of KB and the registry file
+// is rewritten on every settings update, so persisting a stack of them would
+// bloat it badly. Photoshop's own history is gone by the next session anyway.
+const MAX_CHECKPOINTS = 10;
+let checkpointSeq = 0;
+
+// xml === null is meaningful: "there was no sidecar here", itself a restorable
+// state (the raw at camera defaults).
+async function saveCheckpoint(doc, layerId, xml, label) {
+  await ensureLoaded();
+  const entry = (store[docKeyFor(doc)] || {})[layerId];
+  if (!entry) return null;
+  if (!entry.checkpoints) entry.checkpoints = [];
+  const id = `cp${++checkpointSeq}`;
+  entry.checkpoints.push({
+    id,
+    label: label || "edit",
+    at: Date.now(),
+    xml: xml === undefined ? null : xml,
+  });
+  // Oldest out first. Ten deep is far more than anyone unwinds by hand, and it
+  // bounds what is a few hundred KB of strings per layer.
+  if (entry.checkpoints.length > MAX_CHECKPOINTS) entry.checkpoints.shift();
+  return id;
+}
+
+// The saved sidecar for one checkpoint, or undefined if it has been dropped -
+// which happens once ten newer ones exist, or on a plugin reload.
+async function checkpointXml(doc, layerId, id) {
+  await ensureLoaded();
+  const entry = (store[docKeyFor(doc)] || {})[layerId];
+  if (!entry || !entry.checkpoints) return undefined;
+  const found = entry.checkpoints.find((c) => c.id === id);
+  return found ? found.xml : undefined;
+}
+
 
 function flattenLayers(layers, acc = []) {
   for (const layer of layers) {
@@ -122,11 +180,17 @@ async function rawLayersIn(doc) {
         name: layer.name,
         rawPath: entry.rawPath,
         lastSettings: entry.lastSettings,
-        syncedHash: entry.syncedHash,
+        aspect: entry.aspect || null,
       });
     }
   }
   return out;
 }
 
-module.exports = { register, updateSettings, rawLayersIn };
+module.exports = {
+  register,
+  updateSettings,
+  rawLayersIn,
+  saveCheckpoint,
+  checkpointXml,
+};

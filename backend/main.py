@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from jsonschema import ValidationError
 from pydantic import BaseModel
 
+from geometry_render import crop_thumbnails, rotation_preview
 from image_annotate import add_coordinate_grid
 from llm_client import chat, request_edit_plan
 from mask_render import corrections_from_plan, render_verify_image
@@ -263,4 +264,34 @@ def chat_endpoint(req: ChatRequest):
     if plan is not None:
         _save_overlay(image, corrections_from_plan(plan), "final")
 
-    return {"reply": display, "edit_plan": plan}
+    # Geometry previews, rendered from the preview JPEG we already have. Every
+    # apply costs the user a manual Camera Raw dialog, so showing candidate crops
+    # by trial-applying them would cost one dialog each; cropping the preview
+    # costs nothing and they pick once. Rendered from the UNGRIDDED original so
+    # the thumbnails are of the photo, not of our coordinate overlay.
+    previews = _geometry_previews(plan, req.image_base64)
+
+    return {"reply": display, "edit_plan": plan, "geometry_previews": previews}
+
+
+def _geometry_previews(plan, image_base64):
+    """Thumbnails for a plan's crop proposals, or for a straighten it proposes."""
+    if not plan or not image_base64:
+        return None
+    try:
+        proposals = plan.get("proposals") or []
+        if proposals:
+            cards = crop_thumbnails(image_base64, proposals)
+            return {"kind": "crops", "options": cards} if cards else None
+
+        for step in plan.get("steps") or []:
+            if step.get("op") != "applyGeometry":
+                continue
+            params = step.get("params") or {}
+            # Only a plain straighten is previewable. Upright is fitted to the
+            # image content by Camera Raw and cannot be known until it has run.
+            if params.get("rotate") and not params.get("upright"):
+                return {"kind": "rotation", **rotation_preview(image_base64, params["rotate"])}
+    except Exception as exc:  # a preview is a nicety; never fail the turn over it
+        logger.warning("geometry preview failed: %s", exc)
+    return None

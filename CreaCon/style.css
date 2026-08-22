@@ -97,6 +97,57 @@ html, body {
 .plan-actions sp-button {
   margin-right: 6px;
 }
+/* Crop choices: a horizontal strip of thumbnails the user picks from. */
+.proposal-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 6px 0;
+}
+
+.proposal {
+  flex: 0 0 auto;
+  max-width: 150px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px;
+}
+
+.proposal:hover {
+  border-color: #6a9fd8;
+}
+
+/* Photoshop blocks the whole UI thread while an apply is modal, so nothing in
+   the panel can be clicked. Showing that plainly beats a live-looking card that
+   ignores you. */
+.proposal-disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.proposal-disabled:hover {
+  border-color: transparent;
+}
+
+.proposal img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 2px;
+}
+
+.proposal-label {
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.proposal-reason {
+  opacity: 0.7;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
 .plan-status {
   font-size: 12px;
   color: #9a9a9a;

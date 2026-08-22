@@ -12,9 +12,14 @@ const schema = require("./schema/editPlan.schema.json");
 const ALLOWED_OPS = {};
 schema.definitions.step.allOf.forEach((clause) => {
   const op = clause.if.properties.op.const;
-  const requiredParams = clause.then.properties.params.required;
-  ALLOWED_OPS[op] = requiredParams;
+  // Some ops (applyGeometry) have no required params - every field is optional
+  // on its own. Default to [] so they don't read as unknown ops below.
+  ALLOWED_OPS[op] = clause.then.properties.params.required || [];
 });
+
+// Fields that each make an applyGeometry step do something. A step with none of
+// them still costs a Camera Raw dialog and changes nothing.
+const GEOMETRY_ACTIONS = ["rotate", "upright", "crop", "lensProfile"];
 
 function validateEditPlan(plan) {
   const errors = [];
@@ -22,9 +27,14 @@ function validateEditPlan(plan) {
   if (!plan || typeof plan !== "object") {
     return { valid: false, errors: ["Plan must be an object"] };
   }
-  if (!Array.isArray(plan.steps) || plan.steps.length === 0) {
-    return { valid: false, errors: ["Plan must contain a non-empty 'steps' array"] };
+  const hasProposals = Array.isArray(plan.proposals) && plan.proposals.length > 0;
+  const hasSteps = Array.isArray(plan.steps) && plan.steps.length > 0;
+  // A proposals-only reply is legitimate: it offers the user crop choices to
+  // pick from rather than applying anything.
+  if (!hasSteps && !hasProposals) {
+    return { valid: false, errors: ["Plan must contain a non-empty 'steps' or 'proposals' array"] };
   }
+  if (!hasSteps) return { valid: true, errors: [] };
 
   plan.steps.forEach((step, i) => {
     const requiredParams = ALLOWED_OPS[step.op];
@@ -47,8 +57,28 @@ function validateEditPlan(plan) {
         errors.push(`Step ${i}: opacity must be a number between 0 and 100`);
       }
     }
+    if (step.op === "applyGeometry") {
+      if (!GEOMETRY_ACTIONS.some((k) => step.params[k] !== undefined)) {
+        errors.push(
+          `Step ${i} (applyGeometry): needs at least one of ${GEOMETRY_ACTIONS.join(", ")}`
+        );
+      }
+      // 'auto' upright straightens by itself, so a rotate alongside it double-
+      // corrects and the refinement can't be judged until the result is visible.
+      if (step.params.upright && step.params.upright !== "off" && step.params.rotate) {
+        errors.push(
+          `Step ${i} (applyGeometry): don't set 'rotate' together with an upright mode - ` +
+            "upright straightens too. Apply upright first, then refine in a later turn."
+        );
+      }
+    }
   });
 
+  // Geometry and develop settings used to be rejected in the same plan. They are
+  // allowed now: the executor reorders geometry last and defers the develop
+  // step's reload, so masks convert against the frame the model actually saw and
+  // the pair costs one Camera Raw dialog rather than two. See orderGeometryLast
+  // in executor/index.js.
   return { valid: errors.length === 0, errors };
 }
 

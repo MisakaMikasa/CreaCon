@@ -2,8 +2,12 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "AIEditPlan",
   "type": "object",
-  "required": ["summary", "steps"],
+  "required": ["summary"],
   "additionalProperties": false,
+  "anyOf": [
+    { "required": ["steps"] },
+    { "required": ["proposals"] }
+  ],
   "properties": {
     "summary": {
       "type": "string",
@@ -13,7 +17,36 @@
       "type": "array",
       "minItems": 1,
       "maxItems": 20,
+      "description": "The edits to apply. Omit entirely when offering 'proposals' instead - those are choices for the user, not actions.",
       "items": { "$ref": "#/definitions/step" }
+    },
+    "proposals": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "description": "Alternative CROPS to offer the user as thumbnails instead of applying anything. Use ONLY when the user asked something open-ended AND the composition can be improved significantly - never on a narrow request, never more than once per photo, and never on a photo that already has a crop. Picking one applies it; ignoring them costs nothing. When proposals are present, 'steps' should contain no applyGeometry for the same layer.",
+      "items": {
+        "type": "object",
+        "required": ["label", "reason", "crop"],
+        "additionalProperties": false,
+        "properties": {
+          "label": { "type": "string", "description": "Two or three words, e.g. 'Tighter on subject'." },
+          "reason": { "type": "string", "description": "One line on what this crop improves." },
+          "targetLayer": { "type": "string" },
+          "crop": {
+            "type": "object",
+            "required": ["left", "top", "right", "bottom"],
+            "additionalProperties": false,
+            "description": "Normalized 0..1 rectangle read off the preview grid.",
+            "properties": {
+              "left": { "type": "number", "minimum": 0, "maximum": 1 },
+              "top": { "type": "number", "minimum": 0, "maximum": 1 },
+              "right": { "type": "number", "minimum": 0, "maximum": 1 },
+              "bottom": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
     }
   },
   "definitions": {
@@ -32,7 +65,8 @@
             "createGroup",
             "addMask",
             "setBlendMode",
-            "applyCameraRaw"
+            "applyCameraRaw",
+            "applyGeometry"
           ]
         },
         "description": {
@@ -212,6 +246,44 @@
           }
         },
         {
+          "if": { "properties": { "op": { "const": "applyGeometry" } } },
+          "then": {
+            "properties": {
+              "params": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Crop, straighten and perspective on a RAW layer. MUST be the only step touching that layer - geometry moves the frame every mask is measured against, and a perspective correction is not computed until it has been applied, so masks belong in a LATER turn against the corrected preview.",
+                "properties": {
+                  "targetLayer": { "type": "string", "description": "RAW layer name; optional when only one exists." },
+                  "rotate": {
+                    "type": "number",
+                    "minimum": -10,
+                    "maximum": 10,
+                    "description": "Straighten, in degrees, via the crop angle - ACR shrinks the crop to fit so no empty corners appear. This is EXPENSIVE: on a 3:2 frame 1 deg costs 5% of the picture, 3 deg 14%, 5 deg 21%. Stay under ~3 deg unless the user asked for more."
+                  },
+                  "upright": {
+                    "type": "string",
+                    "enum": ["off", "auto", "level", "vertical", "full"],
+                    "description": "Perspective correction. Use 'auto' - it straightens as well, so do NOT also set 'rotate' in the same step. The result cannot be previewed: ACR fits it to the image content, and on a strong correction it can leave empty corners. Only for genuine converging verticals, never as routine polish."
+                  },
+                  "lensProfile": { "type": "boolean", "description": "Lens profile correction. Normally left alone - it is on by default." },
+                  "crop": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "description": "Explicit crop rectangle, normalized 0..1, read off the preview grid. Omit to keep the full frame. ONLY set this when the user asked to recrop - never recompose someone's framing unprompted.",
+                    "properties": {
+                      "left": { "type": "number", "minimum": 0, "maximum": 1 },
+                      "top": { "type": "number", "minimum": 0, "maximum": 1 },
+                      "right": { "type": "number", "minimum": 0, "maximum": 1 },
+                      "bottom": { "type": "number", "minimum": 0, "maximum": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
           "if": { "properties": { "op": { "const": "applyCameraRaw" } } },
           "then": {
             "properties": {
@@ -313,7 +385,7 @@
                                 "required": ["What"],
                                 "additionalProperties": false,
                                 "properties": {
-                                  "What": { "type": "string", "enum": ["Mask/CircularGradient", "Mask/Gradient"], "description": "Only geometric masks are available. AI/content masks (Mask/Image) and luminance range masks (Mask/RangeMask) are intentionally disabled; compose regions from these shapes, combined via MaskBlendMode (add/intersect) and MaskInverted." },
+                                  "What": { "type": "string", "enum": ["Mask/CircularGradient", "Mask/Gradient"], "description": "Geometric masks only: a linear gradient or an elliptical radial." },
                                   "MaskName": { "type": "string" },
                                   "MaskInverted": { "type": "boolean" },
                                   "MaskValue": { "type": "number", "minimum": 0, "maximum": 1, "description": "Mask opacity (default 1)." },

@@ -1,3 +1,4 @@
+const { core } = require("photoshop");
 const { sendChat } = require("./aiClient");
 const { validateEditPlan } = require("./validator");
 const { applyEditPlan } = require("./executor/index");
@@ -10,15 +11,22 @@ const conversation = [];
 let busy = false;
 
 // JS-driven "Thinking…" animation (UXP doesn't reliably animate CSS ::after).
+//
+// It updates ONLY its own bubble. It used to call render(), which wipes and
+// rebuilds the whole conversation - and once previews existed that meant
+// re-decoding every base64 thumbnail two and a half times a second. The panel
+// got so busy that clicks on Apply were dropped for seconds at a time.
 let thinkingTimer = null;
 let thinkingDots = 0;
+let thinkingBubble = null;
 
 function startThinking() {
   thinkingDots = 0;
   stopThinking();
   thinkingTimer = setInterval(() => {
     thinkingDots = (thinkingDots + 1) % 4;
-    render();
+    if (thinkingBubble) thinkingBubble.textContent = "Thinking" + ".".repeat(thinkingDots);
+    else render(); // bubble not on screen yet - one full pass to create it
   }, 400);
 }
 
@@ -27,10 +35,58 @@ function stopThinking() {
     clearInterval(thinkingTimer);
     thinkingTimer = null;
   }
+  thinkingBubble = null;
 }
 
 function el(id) {
   return document.getElementById(id);
+}
+
+// Clicks inside the message list are handled by ONE delegated listener on the
+// container, bound once in setup(), rather than by listeners attached to each
+// button as it is built.
+//
+// render() destroys and rebuilds every row, so per-button listeners were being
+// re-attached constantly - and worse, attached to sp-button elements before they
+// were connected to the document, so whether a click registered depended on when
+// the custom element happened to upgrade. That is what made Apply dead for the
+// first few seconds after a reply.
+//
+// A listener on a container that never gets replaced cannot have that problem.
+function tagAction(node, action, ...args) {
+  node.setAttribute("data-action", action);
+  node.setAttribute("data-args", JSON.stringify(args));
+  return node;
+}
+
+function onMessagesClick(event) {
+  // Walk UP from whatever was clicked. Do NOT rely on composedPath() alone: UXP
+  // does not implement it, and its absence is not obvious because the two kinds
+  // of clickable behave differently.
+  //   - sp-button: shadow DOM retargets, so event.target IS the tagged element
+  //     and a target-only check appears to work.
+  //   - a crop proposal: a plain div wrapping an <img> and three text divs, so
+  //     event.target is one of those CHILDREN and a target-only check finds
+  //     nothing and silently does nothing.
+  // That asymmetry is what made proposals dead while every button still worked.
+  const container = el("messages");
+  let node = event.target;
+  while (node && node !== container) {
+    const action = node.getAttribute && node.getAttribute("data-action");
+    if (action) {
+      let args = [];
+      try {
+        args = JSON.parse(node.getAttribute("data-args") || "[]");
+      } catch {
+        args = [];
+      }
+      const handler = ACTIONS[action];
+      if (handler) handler(...args);
+      else log("No handler for click action:", action);
+      return;
+    }
+    node = node.parentNode;
+  }
 }
 
 // Only user/assistant turns are real conversation for the model. "system" notes
@@ -46,17 +102,144 @@ function conversationForApi() {
     );
 }
 
+// An <img> for a preview, created ONCE and cached on the object that owns it.
+//
+// render() wipes the message list and rebuilds it on every state change. Setting
+// a fresh `src="data:image/jpeg;base64,..."` each time makes the panel re-parse
+// and re-decode the whole payload - and three crop thumbnails plus a rotation
+// preview run to ~300 KB. With several previews in scrollback that blocked the
+// UI thread long enough to swallow clicks on Apply, for a wait that grew with
+// how much was on screen.
+//
+// Re-appending an existing node MOVES it, so the decoded image is reused.
+function previewImage(holder, alt) {
+  if (!holder._imgNode) {
+    const img = document.createElement("img");
+    img.src = `data:image/jpeg;base64,${holder.image_base64}`;
+    img.alt = alt;
+    holder._imgNode = img;
+  }
+  return holder._imgNode;
+}
+
+// Crop choices, shown as clickable thumbnails rendered by the backend from the
+// preview JPEG. Nothing is applied until one is picked, so browsing them costs
+// none of the Camera Raw dialogs a trial-apply would.
+function buildProposalCards(msg, idx) {
+  const wrap = document.createElement("div");
+  wrap.className = "plan-card";
+
+  const heading = document.createElement("div");
+  heading.className = "plan-status";
+  heading.textContent =
+    msg.proposalStatus === "picked"
+      ? "✓ Crop applied"
+      : "Pick a crop, or ignore these to keep the photo as it is:";
+  wrap.appendChild(heading);
+  if (msg.proposalStatus === "picked") return wrap;
+
+  const strip = document.createElement("div");
+  strip.className = "proposal-strip";
+
+  msg.previews.options.forEach((option, i) => {
+    const item = document.createElement("div");
+    // Dimmed and untagged while an apply is running - Photoshop is modal, so the
+    // click would be swallowed anyway.
+    item.className = busy ? "proposal proposal-disabled" : "proposal";
+
+    item.appendChild(previewImage(option, option.label));
+
+    const label = document.createElement("div");
+    label.className = "proposal-label";
+    label.textContent = option.label;
+    item.appendChild(label);
+
+    const reason = document.createElement("div");
+    reason.className = "proposal-reason";
+    reason.textContent = option.reason;
+    item.appendChild(reason);
+
+    // Frame cost and shape - the two things a thumbnail can't tell you. Both are
+    // measured from the rectangle rather than taken on trust.
+    const facts = document.createElement("div");
+    facts.className = "proposal-reason";
+    facts.textContent = `keeps ${Math.round(option.retained * 100)}%${
+      option.aspect_label ? ` · ${option.aspect_label}` : ""
+    }`;
+    item.appendChild(facts);
+
+    if (!busy) tagAction(item, "pickProposal", idx, i);
+    strip.appendChild(item);
+  });
+
+  wrap.appendChild(strip);
+  return wrap;
+}
+
+// What a geometry apply actually cost, plus the way back. The user agreed to a
+// correction, not to losing a quarter of the frame, so this is never silent.
+function buildGeometryReport(msg) {
+  const card = document.createElement("div");
+  card.className = "plan-card";
+
+  const line = document.createElement("div");
+  line.className = "plan-status";
+  line.textContent = msg.report.summary;
+  card.appendChild(line);
+
+  const actions = document.createElement("div");
+  actions.className = "plan-actions";
+
+  if (msg.report.wedges && msg.report.correctiveCrop) {
+    const fixBtn = document.createElement("sp-button");
+    fixBtn.setAttribute("variant", "cta");
+    fixBtn.textContent = `Trim the empty corners (keeps ${Math.round(
+      msg.report.retainedAfterFix * 100
+    )}%)`;
+    if (busy) fixBtn.setAttribute("disabled", "true");
+    tagAction(fixBtn, "fixWedges", conversation.indexOf(msg));
+    actions.appendChild(fixBtn);
+  }
+
+  if (msg.report.checkpoint) {
+    const restoreBtn = document.createElement("sp-button");
+    restoreBtn.setAttribute("variant", "secondary");
+    restoreBtn.textContent = "Restore to before this";
+    if (busy) restoreBtn.setAttribute("disabled", "true");
+    tagAction(restoreBtn, "restore", conversation.indexOf(msg));
+    actions.appendChild(restoreBtn);
+  }
+
+  card.appendChild(actions);
+  return card;
+}
+
 function buildPlanCard(msg, idx) {
   const card = document.createElement("div");
   card.className = "plan-card";
 
   const ul = document.createElement("ul");
-  msg.plan.steps.forEach((step) => {
+  (msg.plan.steps || []).forEach((step) => {
     const li = document.createElement("li");
     li.textContent = step.description;
     ul.appendChild(li);
   });
   card.appendChild(ul);
+
+  // A straighten is fully predictable, so show the resulting frame before the
+  // user commits a Camera Raw dialog to it.
+  if (msg.previews && msg.previews.kind === "rotation" && !msg.planStatus) {
+    const preview = document.createElement("div");
+    preview.className = "proposal";
+    preview.appendChild(previewImage(msg.previews, "Straightened preview"));
+    const note = document.createElement("div");
+    note.className = "proposal-reason";
+    note.textContent = `Result after straightening — keeps ${Math.round(
+      msg.previews.retained * 100
+    )}% of the frame`;
+    preview.appendChild(note);
+    card.appendChild(preview);
+  }
 
   if (msg.planStatus === "applied" || msg.planStatus === "cancelled") {
     const status = document.createElement("div");
@@ -72,13 +255,15 @@ function buildPlanCard(msg, idx) {
   const applyBtn = document.createElement("sp-button");
   applyBtn.setAttribute("variant", "cta");
   applyBtn.textContent = msg.planStatus === "applying" ? "Applying…" : "Apply";
-  if (msg.planStatus === "applying") applyBtn.setAttribute("disabled", "true");
-  applyBtn.addEventListener("click", () => onApply(idx));
+  // Disabled while ANY apply is running, not just this card's - Photoshop is
+  // modal and will not process a click from anywhere in the panel.
+  if (msg.planStatus === "applying" || busy) applyBtn.setAttribute("disabled", "true");
+  tagAction(applyBtn, "apply", idx);
 
   const cancelBtn = document.createElement("sp-button");
   cancelBtn.setAttribute("variant", "secondary");
   cancelBtn.textContent = "Cancel";
-  cancelBtn.addEventListener("click", () => onCancel(idx));
+  tagAction(cancelBtn, "cancel", idx);
 
   actions.appendChild(applyBtn);
   actions.appendChild(cancelBtn);
@@ -88,7 +273,10 @@ function buildPlanCard(msg, idx) {
 
 function render() {
   const container = el("messages");
-  container.innerHTML = "";
+  // Detach children rather than innerHTML = "", which can tear the nodes down
+  // and would defeat the cached preview images (see previewImage).
+  while (container.firstChild) container.removeChild(container.firstChild);
+  thinkingBubble = null; // the old node is gone; startThinking re-finds it below
 
   conversation.forEach((msg, idx) => {
     const roleClass = msg.thinking ? "assistant" : msg.role;
@@ -100,6 +288,7 @@ function render() {
     if (msg.thinking) {
       bubble.className = "bubble bubble-thinking";
       bubble.textContent = "Thinking" + ".".repeat(thinkingDots);
+      thinkingBubble = bubble; // animated in place, without re-rendering the list
     } else {
       bubble.className = `bubble bubble-${msg.role}`;
       bubble.textContent = msg.text;
@@ -107,8 +296,15 @@ function render() {
     row.appendChild(bubble);
     container.appendChild(row);
 
-    if (msg.plan) {
+    // A proposals-only reply offers choices instead of an action, so it gets
+    // thumbnails rather than an Apply button.
+    if (msg.previews && msg.previews.kind === "crops") {
+      container.appendChild(buildProposalCards(msg, idx));
+    } else if (msg.plan && (msg.plan.steps || []).length) {
       container.appendChild(buildPlanCard(msg, idx));
+    }
+    if (msg.report) {
+      container.appendChild(buildGeometryReport(msg));
     }
   });
 
@@ -131,14 +327,22 @@ async function onSend() {
   try {
     const apiMessages = conversationForApi();
     log("Sending chat,", apiMessages.length, "messages");
-    const { reply, edit_plan } = await sendChat(apiMessages);
-    log("Reply:", reply, "| plan:", edit_plan ? `${edit_plan.steps.length} steps` : "none");
+    const { reply, edit_plan, geometry_previews } = await sendChat(apiMessages);
+    log(
+      "Reply:",
+      reply,
+      "| plan:",
+      edit_plan ? `${(edit_plan.steps || []).length} steps` : "none",
+      "| previews:",
+      geometry_previews ? geometry_previews.kind : "none"
+    );
 
     removeMessage(thinkingMsg);
     conversation.push({
       role: "assistant",
       text: reply || "(no reply)",
       plan: edit_plan || null,
+      previews: geometry_previews || null,
     });
   } catch (err) {
     error("Chat failed:", err);
@@ -153,7 +357,7 @@ async function onSend() {
 
 async function onApply(idx) {
   const msg = conversation[idx];
-  if (!msg || !msg.plan || msg.planStatus) return;
+  if (busy || !msg || !msg.plan || msg.planStatus) return;
 
   const { valid, errors } = validateEditPlan(msg.plan);
   if (!valid) {
@@ -162,13 +366,46 @@ async function onApply(idx) {
     return;
   }
 
+  // Marks the panel busy so every OTHER card renders its buttons disabled.
+  // Applying enters executeAsModal, and Photoshop blocks the whole UI thread
+  // while modal - no click anywhere in the panel is processed. Buttons that look
+  // live but swallow clicks read as broken; greyed-out ones read as "wait".
+  busy = true;
   msg.planStatus = "applying";
   render();
 
   try {
-    await applyEditPlan(msg.plan, (i, step) => log(`Step ${i} done:`, step.op));
+    let geometryReport = null;
+    let developResult = null;
+    await applyEditPlan(msg.plan, (i, step, result) => {
+      log(`Step ${i} done:`, step.op);
+      if (step.op === "applyGeometry" && result) geometryReport = result;
+      if (step.op === "applyCameraRaw" && result) developResult = result;
+    });
     msg.planStatus = "applied";
-    conversation.push({ role: "system", text: `Applied: ${msg.plan.summary || "the edit"}` });
+    conversation.push({
+      role: "system",
+      text: `Applied: ${msg.plan.summary || "the edit"}`,
+      // Every raw apply saves a restore point, so a develop edit gets one too -
+      // not just geometry. No cost figures to show, hence the bare summary.
+      report:
+        !geometryReport && developResult && developResult.checkpoint
+          ? {
+              summary: msg.plan.summary || "the edit",
+              checkpoint: developResult.checkpoint,
+              layer: developResult.layer,
+            }
+          : undefined,
+    });
+    if (geometryReport) {
+      // Goes in as a "system" note so the MODEL sees it next turn too - it has
+      // to know the frame changed before it places any mask.
+      conversation.push({
+        role: "system",
+        text: `Geometry applied: ${geometryReport.summary}.`,
+        report: geometryReport,
+      });
+    }
     // ACR loads AI mask *parameters* headlessly but may not run the actual
     // segmentation until nudged (the "Update AI settings" affordance) - warn
     // the user so an unchanged region isn't mistaken for a failed edit.
@@ -193,6 +430,7 @@ async function onApply(idx) {
     msg.planStatus = undefined; // allow retry
     conversation.push({ role: "error", text: `Error applying edit: ${formatError(err)}` });
   } finally {
+    busy = false;
     render();
   }
 }
@@ -277,6 +515,88 @@ async function onOpenRaw() {
   }
 }
 
+// Runs a one-step geometry plan built by the panel itself (a picked crop, or a
+// wedge trim). These are the user's direct choices, so they skip the Apply card.
+async function runGeometry(params, summary, sourceMsg) {
+  if (busy) return;
+  busy = true;
+  render();
+  try {
+    let report = null;
+    await applyEditPlan(
+      { summary, steps: [{ op: "applyGeometry", description: summary, params }] },
+      (i, step, result) => {
+        if (result) report = result;
+      }
+    );
+    conversation.push({
+      role: "system",
+      text: report ? `${summary}: ${report.summary}.` : `${summary}.`,
+      report: report || undefined,
+    });
+    if (report) report.summary = `${summary} — ${report.summary}`;
+    if (sourceMsg) sourceMsg.proposalStatus = "picked";
+  } catch (err) {
+    error("Geometry apply failed:", err);
+    conversation.push({ role: "error", text: `Error: ${formatError(err)}` });
+  } finally {
+    busy = false;
+    render();
+  }
+}
+
+function onPickProposal(idx, optionIndex) {
+  const msg = conversation[idx];
+  if (!msg || !msg.previews || msg.proposalStatus) return;
+  const option = msg.previews.options[optionIndex];
+  if (!option) return;
+  runGeometry(
+    { targetLayer: option.targetLayer || undefined, crop: option.crop },
+    `Cropped: ${option.label}`,
+    msg
+  );
+}
+
+// Trims the transparent corners a strong perspective correction can leave. The
+// rectangle comes from the transform Camera Raw wrote back, so it is measured
+// rather than guessed.
+function onFixWedges(idx) {
+  const msg = conversation[idx];
+  if (!msg || !msg.report || !msg.report.correctiveCrop) return;
+  runGeometry({ crop: msg.report.correctiveCrop }, "Trimmed the empty corners", null);
+  msg.report = { ...msg.report, wedges: false };
+}
+
+// Puts the raw back to the state saved before THIS edit, by id. Each card holds
+// its own checkpoint, so restoring an older one still does what the card says
+// even after later edits - which "undo the last apply" could not.
+async function onRestoreCheckpoint(idx) {
+  const msg = conversation[idx];
+  if (busy || !msg || !msg.report || !msg.report.checkpoint) return;
+  busy = true;
+  render();
+  try {
+    const { restoreCheckpoint } = require("./executor/geometry");
+    const name = await core.executeAsModal(
+      async () => restoreCheckpoint(msg.report.checkpoint, msg.report.layer),
+      { commandName: "CreaCon: restore checkpoint" }
+    );
+    conversation.push({
+      role: "system",
+      text: `Restored "${name}" to before that edit.`,
+    });
+    // The card's restore point has been used up as a destination, but the state
+    // it replaced is now a checkpoint of its own, so nothing is a dead end.
+    msg.report = undefined;
+  } catch (err) {
+    error("Restore failed:", err);
+    conversation.push({ role: "error", text: `Couldn't restore: ${formatError(err)}` });
+  } finally {
+    busy = false;
+    render();
+  }
+}
+
 function onCancel(idx) {
   const msg = conversation[idx];
   if (msg) msg.planStatus = "cancelled";
@@ -288,9 +608,21 @@ function removeMessage(msg) {
   if (i !== -1) conversation.splice(i, 1);
 }
 
+// Dispatch table for the delegated listener above. Defined here, after every
+// handler exists.
+const ACTIONS = {
+  apply: onApply,
+  cancel: onCancel,
+  pickProposal: onPickProposal,
+  fixWedges: onFixWedges,
+  restore: onRestoreCheckpoint,
+};
+
 function setup() {
   el("btnSend").addEventListener("click", onSend);
   el("btnOpenRaw").addEventListener("click", onOpenRaw);
+  // One listener for every button inside the message list - see onMessagesClick.
+  el("messages").addEventListener("click", onMessagesClick);
   el("chatInput").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
