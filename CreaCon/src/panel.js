@@ -485,9 +485,9 @@ async function askImportChoice(fileName) {
   return result === "keep" || result === "fresh" ? result : "cancel";
 }
 
-// Places a user-picked raw file as a smart object and registers its path so
-// chat plans can develop it via applyCameraRaw (sidecar + re-import). This is
-// the REQUIRED entry point for raw editing: smart objects created outside
+// Places a user-picked photo (RAW or JPEG) as a smart object and registers it so
+// chat plans can develop it via applyCameraRaw (write state + re-import). This is
+// the REQUIRED entry point for develop editing: smart objects created outside
 // CreaCon have no recoverable file path (see rawRegistry.js).
 async function onOpenRaw() {
   if (busy) return;
@@ -502,13 +502,13 @@ async function onOpenRaw() {
       conversation.push({
         role: "system",
         text:
-          `Opened RAW as smart object layer "${layerName}". ` +
+          `Opened photo as smart object layer "${layerName}". ` +
           "Ask for develop edits - exposure, white balance, dehaze, color…",
       });
     }
   } catch (err) {
-    error("Open RAW failed:", err);
-    conversation.push({ role: "error", text: `Open RAW failed: ${formatError(err)}` });
+    error("Open photo failed:", err);
+    conversation.push({ role: "error", text: `Open photo failed: ${formatError(err)}` });
   } finally {
     busy = false;
     render();

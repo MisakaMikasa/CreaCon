@@ -8,19 +8,37 @@
 // "Open RAW" button). Raw smart objects created outside CreaCon can't be
 // develop-edited - there is no way to find their sidecar.
 //
-// Identity model: entries are keyed by DOCUMENT PATH -> LAYER ID. Layer IDs
-// are unique within a document and stable across save/reopen (stored in the
-// PSD), so multiple raws in one document can't be confused. Persisted to
-// rawRegistry.json in the plugin's data folder. Caveats: an unsaved document
-// has no path, so its entries live under a session-only key (migrated to the
-// real path automatically once the doc is saved and any registry read runs);
-// "Save As" to a new path orphans the mapping - re-import the raw then.
+// Identity model: entries are keyed by DOCUMENT PATH -> LAYER ID, and that key
+// is a HINT, NOT PROOF. Layer IDs are unique within a document at any moment and
+// survive save/reopen, but Photoshop REUSES them once a layer is deleted, so an
+// entry left behind by a removed layer will happily match an unrelated new one.
+//
+// This is not theoretical: it once made CreaCon write one photo's develop
+// settings into a different photo's sidecar, because a newly placed JPEG got the
+// layer id of a raw that had been deleted from the same document. Every consumer
+// must therefore CHECK that the layer really contains the file its entry names
+// before acting on it - see verifiedPhotoLayers in cameraRaw.js, which is the
+// only supported way to read this registry.
+//
+// Persisted to rawRegistry.json in the plugin's data folder. Caveats: an unsaved
+// document has no path, so its entries live under a session-only key (migrated
+// to the real path automatically once the doc is saved and any registry read
+// runs); "Save As" to a new path orphans the mapping - re-import then.
 const { localFileSystem } = require("uxp").storage;
 const { log } = require("../log");
 
 const REGISTRY_FILE = "rawRegistry.json";
 
-// { [docKey]: { [layerId]: { rawPath, lastSettings } } }
+// { [docKey]: { [layerId]: { filePath, sourcePath, kind, lastSettings, stateXml, aspect } } }
+//
+//   filePath    the file whose develop state we read and write. For a raw that
+//               is the user's own photo; for a JPEG it is a working copy in the
+//               photo cache, because a JPEG's settings live inside the image and
+//               editing the original would mutate the user's file.
+//   sourcePath  where the working copy came from. Equal to filePath for raws.
+//   stateXml    a mirror of the develop state last written. Only a few KB, and
+//               it is what makes a lost working copy a rebuild rather than data
+//               loss (see photoCache.rebuildFrom).
 let store = null;
 let loadPromise = null;
 
@@ -80,12 +98,33 @@ async function saveToDisk() {
 // between the preview and the sensor needs the frame's proportions whenever a
 // rotated crop is involved (at CropAngle 0 the aspect cancels out entirely).
 // Recorded once at import because the placed layer is uncropped at that moment.
-async function register(doc, layerId, rawPath, aspect) {
+async function register(doc, layerId, filePath, aspect, options = {}) {
   await ensureLoaded();
   const key = docKeyFor(doc);
   if (!store[key]) store[key] = {};
-  store[key][layerId] = { rawPath, lastSettings: null, aspect: aspect || null };
+  store[key][layerId] = {
+    filePath,
+    // Defaults to filePath so a raw, which has no separate original, needs no
+    // special-casing anywhere downstream.
+    sourcePath: options.sourcePath || filePath,
+    kind: options.kind || null,
+    lastSettings: null,
+    stateXml: null,
+    aspect: aspect || null,
+  };
   await saveToDisk();
+}
+
+// Mirrors the develop state XML we just wrote. Small (a few KB) and worth
+// persisting: with the original still on disk, this is enough to rebuild a
+// working copy that has been swept, moved or deleted.
+async function updateStateMirror(doc, layerId, xml) {
+  await ensureLoaded();
+  const entry = (store[docKeyFor(doc)] || {})[layerId];
+  if (entry) {
+    entry.stateXml = xml || null;
+    await saveToDisk();
+  }
 }
 
 // Records the model-visible settings after a successful apply. This is only a
@@ -147,6 +186,39 @@ async function checkpointXml(doc, layerId, id) {
 }
 
 
+// Drops one mapping. Used when a layer turns out NOT to contain the file its
+// entry claims - see verifiedPhotoLayers in cameraRaw.js. Leaving a proven-stale
+// entry in place would let it capture the next layer to reuse that id too.
+async function forget(doc, layerId) {
+  await ensureLoaded();
+  const layers = store[docKeyFor(doc)];
+  if (layers && layers[layerId]) {
+    delete layers[layerId];
+    await saveToDisk();
+    return true;
+  }
+  return false;
+}
+
+// EVERY entry stored for a document, including ones whose layer no longer
+// exists. rawLayersIn deliberately hides those - it only returns entries it can
+// match to a live layer - which is why dead entries accumulate unnoticed and can
+// later capture a reused layer id. Diagnostics need to see them.
+async function entriesFor(doc) {
+  await ensureLoaded();
+  const layers = store[docKeyFor(doc)] || {};
+  return Object.entries(layers).map(([layerId, entry]) => ({
+    layerId: Number(layerId),
+    filePath: entry.filePath || entry.rawPath,
+    sourcePath: entry.sourcePath || entry.filePath || entry.rawPath,
+    kind: entry.kind || null,
+  }));
+}
+
+function docKeyOf(doc) {
+  return docKeyFor(doc);
+}
+
 function flattenLayers(layers, acc = []) {
   for (const layer of layers) {
     acc.push(layer);
@@ -175,11 +247,18 @@ async function rawLayersIn(doc) {
   for (const layer of flattenLayers(doc.layers)) {
     const entry = layers[layer.id];
     if (entry) {
+      // Registries written before JPEG support stored the path as `rawPath` and
+      // had no notion of a separate original. Read them rather than orphaning
+      // every raw layer a user already has in a saved document.
+      const filePath = entry.filePath || entry.rawPath;
       out.push({
         id: layer.id,
         name: layer.name,
-        rawPath: entry.rawPath,
+        filePath,
+        sourcePath: entry.sourcePath || filePath,
+        kind: entry.kind || null,
         lastSettings: entry.lastSettings,
+        stateXml: entry.stateXml || null,
         aspect: entry.aspect || null,
       });
     }
@@ -190,7 +269,13 @@ async function rawLayersIn(doc) {
 module.exports = {
   register,
   updateSettings,
+  updateStateMirror,
+  // Unverified: matches on layer id alone, which can be stale. Everything
+  // outside cameraRaw.js should use verifiedPhotoLayers instead.
   rawLayersIn,
+  entriesFor,
+  docKeyOf,
+  forget,
   saveCheckpoint,
   checkpointXml,
 };
