@@ -18,10 +18,8 @@
 // The report is the point: the user consented to a correction, not to losing a
 // quarter of the frame, so every apply comes back with what it cost.
 const { app } = require("photoshop");
-const fs = require("fs");
 const { log, formatError } = require("../log");
 const {
-  sidecarPathFor,
   serialize,
   parseFull,
   parseGeometry,
@@ -31,7 +29,8 @@ const {
 } = require("./xmpSidecar");
 const geometryMath = require("./geometryMath");
 const registry = require("./rawRegistry");
-const { resolveRawTarget, reloadRaw, maskSpace } = require("./cameraRaw");
+const store = require("./developStore");
+const { resolveRawTarget, reloadRaw, maskSpace, ensureFileAvailable } = require("./cameraRaw");
 
 const UPRIGHT_MODES = { off: 0, auto: 1, level: 2, vertical: 3, full: 4 };
 
@@ -39,17 +38,10 @@ const UPRIGHT_MODES = { off: 0, auto: 1, level: 2, vertical: 3, full: 4 };
 // the frame. The model is told to stay well under it; this is the backstop.
 const MAX_AUTO_ANGLE = 10;
 
-async function writeTextFile(nativePath, text) {
-  await fs.writeFile(nativePath, text, { encoding: "utf-8" });
-}
-
-async function readTextFileIfExists(nativePath) {
-  try {
-    return await fs.readFile(nativePath, { encoding: "utf-8" });
-  } catch {
-    return null;
-  }
-}
+// Develop-state IO through the store, so geometry works on a JPEG (settings
+// inside the image) exactly as it does on a raw (settings in a sidecar).
+const readState = store.readState;
+const writeState = store.writeState;
 
 function pct(fraction) {
   return `${Math.round(fraction * 100)}%`;
@@ -158,9 +150,9 @@ function describe(report) {
 async function applyGeometry(params) {
   const doc = app.activeDocument;
   const target = await resolveRawTarget(doc, params.targetLayer);
+  await ensureFileAvailable(target);
 
-  const sidecarPath = sidecarPathFor(target.rawPath);
-  const currentXml = await readTextFileIfExists(sidecarPath);
+  const currentXml = await readState(target.filePath);
   const current = currentXml ? parseFull(currentXml) : null;
 
   const geometry = nextGeometry(current ? current.geometry : DEFAULT_GEOMETRY, params);
@@ -178,15 +170,15 @@ async function applyGeometry(params) {
     currentXml,
     params.upright && params.upright !== "off" ? "perspective correction" : "crop / straighten"
   );
-  await writeTextFile(sidecarPath, xmlOut);
-  log(`applyGeometry: sidecar written: ${sidecarPath}`, geometry);
+  await writeState(target.filePath, xmlOut);
+  log(`applyGeometry: state written to ${store.describeLocation(target.filePath)}`, geometry);
 
   await reloadRaw(target, "applyGeometry", xmlOut);
 
   // Re-read: an Upright writes its computed matrix (and possibly a constrained
   // crop) back, and that write-back is the only source of truth for what the
   // correction actually did.
-  const xmlAfter = await readTextFileIfExists(sidecarPath);
+  const xmlAfter = await readState(target.filePath);
   const finalGeometry = xmlAfter ? parseGeometry(xmlAfter) : geometry;
   const report = reportFor(xmlAfter, finalGeometry, target.aspect);
   report.summary = describe(report);
@@ -196,21 +188,24 @@ async function applyGeometry(params) {
   report.layer = target.name;
 
   // Stored in PREVIEW space, matching everything else that writes here - it is
-  // only a fallback for a missing sidecar, but a mismatched space would be a
+  // only a fallback for a missing state file, but a mismatched space would be a
   // silent wrong answer rather than an error.
   await registry.updateSettings(
     doc,
     target.id,
     maskSpace(current ? current.settings : {}, finalGeometry, target.aspect, false)
   );
+  // Mirror what ACR ended up with, not what we asked for: an Upright rewrites
+  // the state, and a rebuild has to restore the corrected version.
+  await registry.updateStateMirror(doc, target.id, xmlAfter || xmlOut);
   log(`applyGeometry: ${report.summary}`);
   return report;
 }
 
 // --- checkpoints (panel action, not a model op) ---------------------------------
 
-// Puts a raw back to a specific saved state, by id. Exact, because it replays the
-// stored sidecar rather than re-deriving what the settings used to be.
+// Puts a photo back to a specific saved state, by id. Exact, because it replays
+// the stored settings rather than re-deriving what they used to be.
 //
 // By ID, not "the last one": a card in the chat refers to one particular edit,
 // and "undo the most recent apply" would take back something else entirely once
@@ -226,22 +221,25 @@ async function restoreCheckpoint(checkpointId, targetLayer) {
         "ten most recent per layer are kept."
     );
   }
+  await ensureFileAvailable(target);
 
-  const sidecarPath = sidecarPathFor(target.rawPath);
   // Restoring is itself an edit, so snapshot what it replaces. Without this,
   // going back would be a one-way trip.
   await registry.saveCheckpoint(
     doc,
     target.id,
-    await readTextFileIfExists(sidecarPath),
+    await readState(target.filePath),
     "before restore"
   );
+  let restoredXml = previous;
   if (previous === null) {
-    // There was no sidecar before: the closest restore is ACR's import defaults.
-    await writeTextFile(sidecarPath, serialize({}, undefined, DEFAULT_GEOMETRY));
-  } else {
-    await writeTextFile(sidecarPath, previous);
+    // There was no develop state before: the closest restore is ACR's import
+    // defaults. (For a JPEG that is genuinely "as the camera wrote it", since
+    // clearing leaves no packet at all - but writing defaults is harmless and
+    // keeps one code path.)
+    restoredXml = serialize({}, undefined, DEFAULT_GEOMETRY);
   }
+  await writeState(target.filePath, restoredXml);
   await reloadRaw(target, "restoreCheckpoint");
 
   // Same as applyGeometry: cache in PREVIEW space, using the geometry that has
@@ -252,6 +250,7 @@ async function restoreCheckpoint(checkpointId, targetLayer) {
     target.id,
     restored ? maskSpace(restored.settings, restored.geometry, target.aspect, false) : {}
   );
+  await registry.updateStateMirror(doc, target.id, restoredXml);
   // The checkpoint is NOT consumed: restoring is itself an edit, so it saved a
   // checkpoint of its own, and going back and forth between two states has to
   // stay possible.

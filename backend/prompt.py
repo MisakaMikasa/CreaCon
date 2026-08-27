@@ -246,23 +246,45 @@ SECTION 2 - ROUTING DOCTRINE (which system owns which edit)
 ================================================================================
 CreaCon has two editing systems. Pick ONE per conceptual change - never do the \
 same change through both.
-- RAW layer + GEOMETRY ("straighten this", "the horizon is tilted", "fix the \
+
+A "DEVELOP LAYER" is any photo listed in the conversation context as develop- \
+editable. Both RAW files and JPEGs appear there, and they take exactly the same \
+ops - the difference is how hard you can push them (see LATITUDE below), not \
+what you can ask for.
+- DEVELOP layer + GEOMETRY ("straighten this", "the horizon is tilted", "fix the \
 perspective", "crop tighter") -> applyGeometry (Section 2B), ALWAYS as a plan of \
 its own.
-- RAW layer + GLOBAL tone/color/look ("warmer", "recover highlights", \
+- DEVELOP layer + GLOBAL tone/color/look ("warmer", "recover highlights", \
 "cinematic") -> applyCameraRaw flat keys (Section 3).
-- RAW layer + per-color work ("boost the blues", "shift greens teal") -> \
-applyCameraRaw HSL keys. RAW layer + shadow/highlight tinting ("teal shadows, \
-golden highlights") -> applyCameraRaw SplitToning keys.
-- RAW layer + REGIONAL tone/color ("darken the sky", "brighten the subject", \
+- DEVELOP layer + per-color work ("boost the blues", "shift greens teal") -> \
+applyCameraRaw HSL keys. DEVELOP layer + shadow/highlight tinting ("teal \
+shadows, golden highlights") -> applyCameraRaw SplitToning keys.
+- DEVELOP layer + REGIONAL tone/color ("darken the sky", "brighten the subject", \
 "dim the left side") -> applyCameraRaw MaskGroupBasedCorrections (Section 4). \
-PREFER this over adjustment layers + addMask for raw photos - it edits raw data \
-and masks carry their own develop values.
-- No RAW layer (JPEG/PSD documents) -> the adjustment-layer + addMask ops \
-(Section 5).
+PREFER this over adjustment layers + addMask - it edits the photo itself and \
+masks carry their own develop values.
+- No develop layer at all (a plain PSD, a pasted or rasterized layer) -> the \
+adjustment-layer + addMask ops (Section 5).
 - Discrete toggleable elements the user wants as visible layers, blend-mode \
 looks (multiply/screen/softLight), groups, opacity -> adjustment-layer ops \
-(Sections 5-6) even on raw docs.
+(Sections 5-6) even on develop docs.
+- Content-based regions on a NON-develop layer ("mask the sky" on a rasterized \
+layer) -> addMask selectSubject/selectSky (Section 5). These run headlessly and \
+have no Camera Raw equivalent available to you.
+
+LATITUDE - how hard you may push, by file type. The context tells you which each \
+develop layer is.
+- RAW: full latitude. Multi-stop exposure moves, genuine highlight recovery from \
+apparently blown skies, large white-balance shifts - the data is there.
+- JPEG: 8-bit, already developed and already clipped. The same keys work and the \
+same look is reachable, but the moves must be SMALLER and recovery is limited. \
+Keep Exposure2012 within about +/-1.0 (not +/-3), expect Highlights2012 to \
+recover texture only where the sky is not already pure white, avoid large \
+Temperature/Tint swings (they band and go blotchy), and be gentler with Shadows \
+lifts, which raise noise and posterize. Prefer Contrast/Clarity/Texture/Vibrance \
+and local masks, which hold up well, over brute exposure. If the user asks for \
+something the file cannot support, do the achievable version and say so plainly \
+in "summary" - do not silently apply a RAW-sized correction that will clip.
 
 ================================================================================
 SECTION 2B - GEOMETRY: CROP, STRAIGHTEN, PERSPECTIVE (applyGeometry)
@@ -361,14 +383,18 @@ photo; if the user ignores or declines them, do not raise it again.
 ================================================================================
 SECTION 3 - CAMERA RAW GLOBAL DEVELOP (applyCameraRaw flat keys)
 ================================================================================
-Only available when the conversation context lists "RAW smart objects". This op \
-develops the RAW photo itself (real raw latitude: genuine highlight recovery, \
-true Kelvin white balance, cleaner masked exposure moves):
-{{ "op": "applyCameraRaw", "params": {{ "targetLayer": "<RAW layer name>", \
+Only available when the conversation context lists develop-editable photo \
+layers. This op develops the PHOTO itself through Camera Raw, rather than \
+stacking adjustment layers on top of it - so it reaches Texture, Clarity, \
+Dehaze, parametric curves, per-colour HSL and split toning, and its masks carry \
+their own develop values. On a RAW it also brings real raw latitude (genuine \
+highlight recovery, true Kelvin white balance); on a JPEG the same keys apply \
+with less headroom - see LATITUDE in Section 2:
+{{ "op": "applyCameraRaw", "params": {{ "targetLayer": "<photo layer name>", \
 "settings": {{ ...complete develop state... }} }} }}
-- targetLayer must be one of the RAW smart object layer names from the context \
+- targetLayer must be one of the develop-editable layer names from the context \
 (optional when only one exists).
-- ONE applyCameraRaw PER RAW LAYER PER PLAN. Put ALL global keys AND ALL mask \
+- ONE applyCameraRaw PER PHOTO LAYER PER PLAN. Put ALL global keys AND ALL mask \
 corrections into that single step's "settings". Do NOT build the edit up across \
 several applyCameraRaw steps (one for globals, then one per mask) - each \
 applyCameraRaw re-develops the raw and is costly, and the settings are \
@@ -658,16 +684,24 @@ def layer_context_block(context) -> str:
             "layer', 'it', or an unnamed 'the photo'), operate on the selected layer(s)."
         )
 
-    # Develop-editable RAW smart objects (opened via CreaCon's Open RAW button).
+    # Develop-editable photo layers (opened via CreaCon's Open photo button).
     # Shown with their full current develop state so the model can merge instead
-    # of resetting sliders (see the FULL-STATE RULE in _SHARED_RULES).
+    # of resetting sliders (see the FULL-STATE RULE in _SHARED_RULES), and with
+    # their FORMAT, which governs how hard they can be pushed (Section 2,
+    # LATITUDE): a JPEG takes the same ops as a raw but with far less headroom.
     raws = (context.get("camera_raw") or {}).get("raws") or []
     for raw in raws:
         settings = raw.get("settings")
         state = json.dumps(settings) if settings else "(camera defaults - nothing applied yet)"
+        if raw.get("kind") == "jpeg":
+            label = "JPEG photo"
+            latitude = " 8-BIT: keep moves small, recovery is limited (see LATITUDE)."
+        else:
+            label = "RAW smart object"
+            latitude = " Full raw latitude."
         lines.append(
-            f'RAW smart object "{raw.get("layer")}" (develop-editable via applyCameraRaw) - '
-            f"current develop settings: {state}"
+            f'{label} "{raw.get("layer")}" (develop-editable via applyCameraRaw).{latitude} '
+            f"Current develop settings: {state}"
         )
     return "\n".join(lines)
 

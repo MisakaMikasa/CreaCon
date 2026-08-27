@@ -1,37 +1,38 @@
-// Camera Raw develop executor - the sidecar-reload path proven by the spike
-// (src/spike/acrReloadSpike.js): ACR can't be scripted directly, but it
-// re-reads the raw's .xmp sidecar whenever placedLayerReplaceContents
-// re-imports the file. So "apply develop settings" =
-//   1. write the full desired state into the sidecar (xmpSidecar.serialize)
-//   2. select the raw smart-object layer
-//   3. replaceContents with the same raw -> ACR re-develops with the new state
+// Camera Raw develop executor - the write-then-reimport path proven by spike
+// (src/spike/acrReloadSpike.js, src/spike/jpegAcrSpike.js): ACR can't be
+// scripted directly, but it re-reads a photo's develop state whenever the smart
+// object is re-imported. So "apply develop settings" =
+//   1. write the full desired state (xmpSidecar.serialize)
+//   2. select the photo's smart-object layer
+//   3. relink to the same file -> ACR re-develops with the new state
+//
+// WHERE that state is written depends on the format and is the one thing this
+// module does not decide for itself - developStore.js owns it. A raw keeps its
+// settings in a .xmp sidecar beside the photo; a JPEG keeps them INSIDE the
+// image. Both hold the same crs: vocabulary, so everything here is format-blind.
+// See docs/jpeg-develop-design.md.
 const { app, core, action } = require("photoshop");
 const { localFileSystem } = require("uxp").storage;
-const fs = require("fs");
 const { log, formatError } = require("../log");
-const {
-  sidecarPathFor,
-  serialize,
-  parse,
-  parseFull,
-  DEFAULT_GEOMETRY,
-} = require("./xmpSidecar");
+const { serialize, parse, parseFull, DEFAULT_GEOMETRY } = require("./xmpSidecar");
 const geometryMath = require("./geometryMath");
 const registry = require("./rawRegistry");
+const store = require("./developStore");
+const photoCache = require("./photoCache");
 
-// DNG excluded: it embeds develop settings inside the file, so the sidecar
-// mechanism can't reach it.
-const RAW_EXTENSIONS = ["cr2", "cr3", "nef", "arw", "raf", "orf", "rw2"];
+// Kept as an export for callers that still speak in raw extensions; the real
+// support test is store.isSupported, which also covers JPEG.
+const RAW_EXTENSIONS = store.RAW_EXTENSIONS;
 
-async function entryForPath(nativePath) {
-  const url = "file:" + nativePath.replace(/\\/g, "/");
-  return localFileSystem.getEntryWithUrl(url);
-}
+const entryForPath = store.entryForPath;
 
 // Detects whether a smart object layer is LINKED (vs embedded). The truthful
 // signal is smartObject.linked on the full layer descriptor - the narrower
 // property-get on smartObjectMore.link gives false negatives on genuinely
 // linked layers (it never carries link info; verified against real layers).
+//
+// smartObject.LINK, on the same full descriptor, is a different thing entirely
+// and DOES carry the source path at `_path` - see layerFileInfo below.
 async function isLinked(layerId) {
   try {
     const info = await action.batchPlay(
@@ -46,30 +47,11 @@ async function isLinked(layerId) {
   }
 }
 
-async function writeTextFile(nativePath, text) {
-  await fs.writeFile(nativePath, text, { encoding: "utf-8" });
-}
-
-async function readTextFileIfExists(nativePath) {
-  try {
-    return await fs.readFile(nativePath, { encoding: "utf-8" });
-  } catch {
-    return null;
-  }
-}
-
-// Best-effort delete (used when the user picks "start fresh" - we remove the old
-// sidecar instead of backing it up). Missing file / delete failure is non-fatal.
-async function removeFileIfExists(nativePath) {
-  try {
-    const entry = await entryForPath(nativePath);
-    if (entry && entry.delete) await entry.delete();
-    return true;
-  } catch (err) {
-    log("removeFileIfExists: nothing to delete or delete failed:", formatError(err));
-    return false;
-  }
-}
+// Develop-state IO goes through the store so raws and JPEGs behave identically
+// here. readState returns null when the photo has no develop settings at all,
+// which is distinct from "settings that happen to be neutral".
+const readState = store.readState;
+const writeState = store.writeState;
 
 // ============================================================================
 // DO NOT REMOVE. This looks like a pointless extra dialog. It is not.
@@ -140,84 +122,108 @@ async function establishAcrSession(layerId, report) {
   }
 }
 
-// --- ingestion (the panel's "Open RAW" button) -------------------------------
+// --- ingestion (the panel's "Open photo" button) -----------------------------
 
-// Lets the user pick a raw, places it as a LINKED smart object, and registers
-// layerId -> path so later applyCameraRaw steps know where the sidecar lives.
+// Lets the user pick a photo, places it as a LINKED smart object, and registers
+// layerId -> path so later applyCameraRaw steps know where its develop state
+// lives. Handles both raws and JPEGs; the only difference is that a JPEG is
+// copied into the photo cache first, because its settings live inside the image
+// and we will not write to a user's original (docs/jpeg-develop-design.md 3.2).
+//
 // askChoice(fileName) -> Promise<"keep"|"fresh"|"cancel"> is called when the
-// raw already has develop settings (panel supplies the dialog).
-// Returns the new layer's name, or null if the user cancelled/picked a non-raw.
+// photo already has develop settings (panel supplies the dialog).
+// Returns the new layer's name, or null if the user cancelled/picked a bad file.
 async function openRawAsSmartObject(report, askChoice) {
-  const entry = await localFileSystem.getFileForOpening(); // unfiltered: UXP type filters are case-sensitive in some builds
-  if (!entry) return null;
+  const picked = await localFileSystem.getFileForOpening(); // unfiltered: UXP type filters are case-sensitive in some builds
+  if (!picked) return null;
 
-  const ext = (entry.nativePath.split(".").pop() || "").toLowerCase();
-  if (!RAW_EXTENSIONS.includes(ext)) {
+  const sourcePath = picked.nativePath;
+  const kind = store.kindOf(sourcePath);
+  if (!kind) {
+    const ext = (sourcePath.split(".").pop() || "").toLowerCase();
     report(
       ext === "dng"
-        ? "DNG files store develop settings internally and can't be developed via sidecar yet - pick a CR2/CR3/NEF/ARW/RAF/ORF/RW2."
-        : `".${ext}" isn't a supported raw type (${RAW_EXTENSIONS.join(", ")}).`
+        ? "DNG files store develop settings internally in a way CreaCon can't reach yet - pick a CR2/CR3/NEF/ARW/RAF/ORF/RW2 or a JPEG."
+        : `".${ext}" isn't a supported photo type (${RAW_EXTENSIONS.join(", ")}, jpg, jpeg).`
     );
     return null;
   }
   if (!app.activeDocument) {
-    report("Open any document first - the raw is placed into it.");
+    report("Open any document first - the photo is placed into it.");
     return null;
   }
 
-  // A raw file has exactly ONE develop state (its sidecar). Two layers backed
-  // by the same raw would fight over it - later applies would clobber each
-  // other on every reload - so refuse instead of corrupting both.
-  const already = (await registry.rawLayersIn(app.activeDocument)).find(
-    (l) => l.rawPath === entry.nativePath
-  );
-  if (already) {
-    report(
-      `This raw is already imported as layer "${already.name}". A raw file has a single ` +
-        "develop state, so it can't be graded twice independently - edit that layer, or " +
-        "duplicate the raw file on disk to grade a second version."
+  // A RAW file has exactly ONE develop state (its sidecar), so two layers backed
+  // by the same raw would clobber each other on every reload - refuse instead of
+  // corrupting both. A JPEG has no such limit here: it is copied per import, so
+  // grading the same photo two ways in one document just works.
+  if (kind === store.KIND_RAW) {
+    const already = (await verifiedPhotoLayers(app.activeDocument)).find(
+      (l) => l.filePath === sourcePath
     );
-    return null;
+    if (already) {
+      report(
+        `This raw is already imported as layer "${already.name}". A raw file has a single ` +
+          "develop state, so it can't be graded twice independently - edit that layer, or " +
+          "duplicate the raw file on disk to grade a second version."
+      );
+      return null;
+    }
+  }
+
+  // For a JPEG, everything from here on operates on OUR copy. The user's file is
+  // read once, at this line, and never written to.
+  let filePath = sourcePath;
+  if (kind === store.KIND_JPEG) {
+    try {
+      filePath = await photoCache.createWorkingCopy(sourcePath);
+    } catch (err) {
+      report(`Couldn't prepare a working copy of that photo: ${formatError(err)}`);
+      return null;
+    }
   }
 
   // Existing develop settings (from a previous CreaCon layer, Lightroom, or
   // manual ACR work): the USER decides at import time - keep them, or start
-  // fresh from camera defaults ("new layer = new edit"). Fresh keeps a backup
-  // and reports the old settings to the chat so the model can restore them on
-  // request. This must happen BEFORE placing - ACR reads the sidecar at place
-  // time. askChoice is injected by the panel (it owns the dialog UI).
-  const sidecarPath = sidecarPathFor(entry.nativePath);
-  const existingXml = await readTextFileIfExists(sidecarPath);
+  // fresh from camera defaults ("new layer = new edit"). Fresh discards them and
+  // reports the old values to the chat so the model can restore them on request.
+  // This must happen BEFORE placing - ACR reads the state at place time.
+  // askChoice is injected by the panel (it owns the dialog UI).
+  const existingXml = await readState(filePath);
   let previousSettings = null;
   let keptExisting = false;
   const previousHadMasks =
     existingXml !== null && existingXml.includes("MaskGroupBasedCorrections");
   if (existingXml !== null) {
-    const fileName = entry.name || entry.nativePath;
+    const fileName = picked.name || sourcePath;
     const choice = askChoice ? await askChoice(fileName) : "fresh";
     if (choice === "cancel") {
       report("Import cancelled.");
       return null;
     }
     if (choice === "fresh") {
-      // The user chose fresh, so DISCARD the old sidecar outright - no backup
-      // file is kept (previous settings are still reported to the chat below so
-      // they can be re-applied this session if wanted). Delete the .xmp, then
-      // write camera defaults so ACR develops from a known clean state at place.
+      // Discard outright - no backup file is kept (the previous settings are
+      // still reported to the chat below, so they can be re-applied this
+      // session if wanted).
       previousSettings = parse(existingXml);
-      await removeFileIfExists(sidecarPath);
-      // DEFAULT_GEOMETRY, not {}: writing any sidecar makes ACR treat it as
-      // authoritative and skip the lens correction it enables on a normal
-      // import, so an empty one silently ships a distorted, vignetted photo.
-      await writeTextFile(sidecarPath, serialize({}, undefined, DEFAULT_GEOMETRY));
+      await store.clearState(filePath);
+      if (kind === store.KIND_RAW) {
+        // DEFAULT_GEOMETRY, not {}: writing any sidecar makes ACR treat it as
+        // authoritative and skip the lens correction it enables on a normal
+        // import, so an empty one silently ships a distorted, vignetted photo.
+        // A JPEG has no such default profile, and clearing its packet already
+        // leaves the file exactly as the camera wrote it - writing a state back
+        // would only put settings into a file that had none.
+        await writeState(filePath, serialize({}, undefined, DEFAULT_GEOMETRY));
+      }
     } else {
-      // "keep": leave the sidecar untouched; ACR applies it at place time and
-      // the per-turn context parses it as the current state.
+      // "keep": leave the state untouched; ACR applies it at place time and the
+      // per-turn context parses it as the current state.
       keptExisting = true;
     }
   }
 
-  const token = localFileSystem.createSessionToken(entry);
+  const token = localFileSystem.createSessionToken(await entryForPath(filePath));
   let layerName = null;
   let placedId = null;
   await core.executeAsModal(
@@ -225,13 +231,12 @@ async function openRawAsSmartObject(report, askChoice) {
       await action.batchPlay(
         [
           {
-            // LINKED, not embedded (spike-verified): a linked raw SO routes
-            // manual ACR-dialog edits into the sidecar - the same file this
-            // executor reads/writes - so user edits and CreaCon edits merge
-            // instead of clobbering. Embedded SOs lock manual edits in a
-            // container no script can read. Costs: the raw must stay at its
-            // path (a dependency the sidecar mechanism already has) and the
-            // PSD isn't self-contained.
+            // LINKED, not embedded (spike-verified): a linked SO routes manual
+            // ACR-dialog edits into the same place this executor reads and
+            // writes, so user edits and CreaCon edits merge instead of
+            // clobbering. Embedded SOs lock manual edits in a container no
+            // script can read, and do not even retain their source path.
+            // Costs: the file must stay put, and the PSD isn't self-contained.
             _obj: "placeEvent",
             null: { _path: token, _kind: "local" },
             linked: true,
@@ -244,30 +249,41 @@ async function openRawAsSmartObject(report, askChoice) {
       if (!placed) throw new Error("Place succeeded but no active layer found");
       // Record the frame proportions while the layer is still uncropped - mask
       // coordinate conversion needs them once a rotated crop exists.
-      await registry.register(
-        app.activeDocument,
-        placed.id,
-        entry.nativePath,
-        aspectOf(placed)
-      );
+      await registry.register(app.activeDocument, placed.id, filePath, aspectOf(placed), {
+        sourcePath,
+        kind,
+      });
       if (!keptExisting) {
         // Fresh import = camera defaults; {} is the accurate develop state.
         // (When keeping existing edits, lastSettings stays null so the
-        // per-turn context falls back to parsing the sidecar itself.)
+        // per-turn context falls back to parsing the file itself.)
         await registry.updateSettings(app.activeDocument, placed.id, {});
       }
       layerName = placed.name;
       placedId = placed.id;
     },
-    { commandName: "CreaCon: open RAW" }
+    { commandName: "CreaCon: open photo" }
   );
-  log(`Opened raw as smart object: "${layerName}" <- ${entry.nativePath}`);
+  log(`Opened ${kind} as smart object: "${layerName}" <- ${filePath}`);
+
+  if (kind === store.KIND_JPEG) {
+    // Say this once, at import. Two things people get wrong otherwise: that we
+    // are editing their file (we are not), and that the working copy is a
+    // shareable edited photo (it is not - the pixels are the original's, and
+    // only Adobe apps apply the settings riding along in its metadata).
+    report(
+      "Imported as a JPEG develop layer. Your original is untouched - edits go to a working " +
+        "copy CreaCon keeps, and they're saved as you go, so nothing is lost if you close " +
+        "without saving. That copy only looks edited in Photoshop, Lightroom and Bridge, so " +
+        "export from Photoshop as usual when you want a finished image to share."
+    );
+  }
 
   if (previousSettings !== null) {
     // The settings JSON goes into the chat, so the model can restore them
     // through a normal applyCameraRaw when asked.
     report(
-      "This raw had previous develop settings - they were discarded so you start fresh " +
+      "This photo had previous develop settings - they were discarded so you start fresh " +
         '(no backup kept). Say "restore the previous edits" to re-apply them from the ' +
         `values below this session. Previous settings: ${JSON.stringify(previousSettings)}` +
         (previousHadMasks
@@ -276,7 +292,7 @@ async function openRawAsSmartObject(report, askChoice) {
     );
   } else if (keptExisting) {
     report(
-      "Kept the raw's existing develop settings (masks included) - they're shown to the " +
+      "Kept the photo's existing develop settings (masks included) - they're shown to the " +
         "AI as the current state and further edits merge on top of them."
     );
   }
@@ -329,21 +345,30 @@ function maskSpace(settings, geometry, aspect, toSensor) {
 
 // --- per-turn context for the model ------------------------------------------
 
-// All develop-editable raw layers in the doc + their current develop state.
+// All develop-editable photo layers in the doc + their current develop state.
 // Fed to the backend so the model (a) knows applyCameraRaw is available and
 // (b) can merge onto the CURRENT settings instead of resetting sliders.
-// External-change detection: the registry remembers a hash of the sidecar
-// content its cached settings correspond to. If the file on disk differs
-// (manual ACR edit, Lightroom, ACR's own AI-digest write-back), the sidecar
-// is the truth - re-parse it fully (masks included) and adopt it.
+// External-change detection: the state on disk (sidecar for a raw, embedded
+// packet for a JPEG) is re-read every turn, so a manual ACR edit, a Lightroom
+// edit, or ACR's own AI-digest write-back is picked up and adopted.
 async function listRawLayers(doc) {
   const raws = [];
-  for (const { name, rawPath, lastSettings, aspect } of await registry.rawLayersIn(doc)) {
-    const xml = await readTextFileIfExists(sidecarPathFor(rawPath));
+  // Verified, not merely registered: an unverified entry here would tell the
+  // model it can develop a layer that actually points at someone else's photo.
+  for (const entry of await verifiedPhotoLayers(doc)) {
+    const { name, filePath, lastSettings, aspect } = entry;
+    // The model is told which format each layer is, because it decides how hard
+    // the photo can be pushed - a JPEG is 8-bit and already clipped, so
+    // raw-sized exposure and white-balance moves fall apart on it. Older
+    // registry entries predate `kind`, so fall back to the path.
+    const kind = entry.kind || store.kindOf(filePath) || store.KIND_RAW;
+    const xml = await readState(filePath);
     if (xml === null) {
-      // Registered but no sidecar on disk (deleted externally). The last applied
-      // state is the best guess left.
-      raws.push({ layer: name, settings: lastSettings || null });
+      // Registered but no develop state readable - the file was deleted or moved
+      // externally. The last applied state is the best guess left. (For a JPEG
+      // this is also the signal that the working copy needs rebuilding; the
+      // apply path handles that, and a read-only context turn should not.)
+      raws.push({ layer: name, kind, settings: lastSettings || null });
       continue;
     }
     // ALWAYS re-parse. There was once a hash-compare fast path here that returned
@@ -354,60 +379,166 @@ async function listRawLayers(doc) {
     // the file on disk is the only real source of truth (the user can edit it in
     // ACR or Lightroom behind our back at any time).
     const { settings, geometry } = parseFull(xml);
-    // The sidecar holds mask coordinates in SENSOR space; the model reads them
-    // off the preview, which is the cropped view. Show it preview coordinates so
-    // the numbers it sees match the picture it sees - applyCameraRaw converts
-    // back on the way out.
-    raws.push({ layer: name, settings: maskSpace(settings, geometry, aspect, false) });
+    // The stored state holds mask coordinates in SENSOR space; the model reads
+    // them off the preview, which is the cropped view. Show it preview
+    // coordinates so the numbers it sees match the picture it sees -
+    // applyCameraRaw converts back on the way out.
+    raws.push({ layer: name, kind, settings: maskSpace(settings, geometry, aspect, false) });
   }
   return raws;
 }
 
+// --- registry verification -----------------------------------------------------
+//
+// THE BUG THIS EXISTS TO PREVENT. The registry maps (document, layer id) -> file,
+// but Photoshop REUSES layer ids after a layer is deleted. A JPEG placed into a
+// document once inherited the id of a raw that had been removed from it, matched
+// that raw's stale entry, and CreaCon wrote the JPEG's develop settings into an
+// unrelated photo's sidecar - corrupting a file the user had not even opened.
+//
+// So a registry hit is a claim, not a fact, and it gets checked: the layer has to
+// actually contain the file the entry names. The check is by FILENAME, which
+// Photoshop exposes for a smart object even when the full path is not readable.
+// A filename is weak evidence of identity but strong evidence of NON-identity,
+// and non-identity is exactly what has to be caught here.
+//
+// Deliberately conservative: an entry is dropped only on POSITIVE evidence of a
+// mismatch. When Photoshop tells us nothing about a layer's file, the entry is
+// kept and a warning logged - a check that cannot see must not start deleting
+// people's working mappings.
+//
+// A LINKED smart object reports its FULL PATH at smartObject.link._path on the
+// full layer descriptor (confirmed 2026-08-26 by the layer/file report). That is
+// the strong check and the one normally used. Note it is smartObject.link, not
+// smartObjectMore.link - the latter genuinely is empty, which is what the older
+// note in this file was about.
+//
+// Embedded smart objects expose no path (that is the whole reason the registry
+// exists), so those fall back to comparing the file NAME via fileReference.
+// Weak evidence of identity - two files with the same name in different folders
+// look identical - but still strong evidence of NON-identity, which is what has
+// to be caught.
+function baseNameOf(nativePath) {
+  return (nativePath || "").split(/[\\/]/).pop().toLowerCase();
+}
+
+// What Photoshop says is behind a layer: { path, name }, either possibly null.
+async function layerFileInfo(layerId) {
+  try {
+    const result = await action.batchPlay(
+      [{ _obj: "get", _target: [{ _ref: "layer", _id: layerId }] }],
+      {}
+    );
+    const descriptor = result[0] || {};
+    const so = descriptor.smartObject || {};
+    const link = so.link || {};
+    const path = typeof link._path === "string" && link._path ? link._path : null;
+    const name =
+      (descriptor.smartObjectMore || {}).fileReference || so.fileReference || null;
+    return { path, name: typeof name === "string" && name ? name : null };
+  } catch (err) {
+    log("layerFileInfo failed:", formatError(err));
+    return { path: null, name: null };
+  }
+}
+
+// Registered photo layers in this document that survive verification. Stale
+// entries are forgotten as they are found, so they cannot capture the next layer
+// to reuse that id either.
+async function verifiedPhotoLayers(doc) {
+  const claimed = await registry.rawLayersIn(doc);
+  const verified = [];
+  for (const entry of claimed) {
+    const actual = await layerFileInfo(entry.id);
+
+    // Strong check: full path. photoCache.canonical folds case, separators and
+    // the file:/// form, so the comparison survives Photoshop handing back a
+    // different spelling of the same location.
+    if (actual.path) {
+      if (photoCache.canonical(actual.path) === photoCache.canonical(entry.filePath)) {
+        verified.push(entry);
+        continue;
+      }
+      log(
+        `verifiedPhotoLayers: STALE ENTRY DROPPED - layer "${entry.name}" (id ${entry.id}) ` +
+          `is linked to "${actual.path}" but was mapped to "${entry.filePath}". The mapping ` +
+          "is discarded rather than written to."
+      );
+      await registry.forget(doc, entry.id);
+      continue;
+    }
+
+    // Weak check: file name only (embedded smart objects expose no path).
+    if (actual.name) {
+      if (actual.name.toLowerCase() === baseNameOf(entry.filePath)) {
+        verified.push(entry);
+        continue;
+      }
+      log(
+        `verifiedPhotoLayers: STALE ENTRY DROPPED - layer "${entry.name}" (id ${entry.id}) ` +
+          `contains "${actual.name}" but was mapped to "${baseNameOf(entry.filePath)}". ` +
+          "Photoshop reused a deleted layer's id; the mapping is discarded."
+      );
+      await registry.forget(doc, entry.id);
+      continue;
+    }
+
+    log(
+      `verifiedPhotoLayers: layer "${entry.name}" (id ${entry.id}) reports neither path nor ` +
+        `file name; keeping its mapping to ${entry.filePath} unverified.`
+    );
+    verified.push(entry);
+  }
+  return verified;
+}
+
 // --- shared plumbing (applyCameraRaw + applyGeometry) --------------------------
 
-// Resolves which registered RAW layer a plan step targets.
+// Resolves which registered photo layer a plan step targets. Raw and JPEG layers
+// are interchangeable here - both are develop-editable and both resolve the same
+// way; only how hard they can be pushed differs, and that is the model's problem.
 async function resolveRawTarget(doc, targetLayer) {
-  const rawLayers = await registry.rawLayersIn(doc);
-  if (rawLayers.length === 0) {
+  const photoLayers = await verifiedPhotoLayers(doc);
+  if (photoLayers.length === 0) {
     throw new Error(
-      'No CreaCon-opened RAW layer in this document. Use the panel\'s "Open RAW" button first ' +
-        "(raw smart objects opened outside CreaCon can't be develop-edited - their file path is unknown)."
+      'No CreaCon-opened photo layer in this document. Use the panel\'s photo button first ' +
+        "(smart objects opened outside CreaCon can't be develop-edited - their file path is unknown)."
     );
   }
   if (targetLayer) {
-    const found = rawLayers.find((l) => l.name === targetLayer);
+    const found = photoLayers.find((l) => l.name === targetLayer);
     if (!found) {
       throw new Error(
-        `"${targetLayer}" is not a develop-editable RAW layer. Available: ` +
-          rawLayers.map((l) => `"${l.name}"`).join(", ")
+        `"${targetLayer}" is not a develop-editable photo layer. Available: ` +
+          photoLayers.map((l) => `"${l.name}"`).join(", ")
       );
     }
     return found;
   }
-  if (rawLayers.length === 1) return rawLayers[0];
+  if (photoLayers.length === 1) return photoLayers[0];
   throw new Error(
-    "Multiple RAW layers exist - the plan must set targetLayer to one of: " +
-      rawLayers.map((l) => `"${l.name}"`).join(", ")
+    "Multiple photo layers exist - the plan must set targetLayer to one of: " +
+      photoLayers.map((l) => `"${l.name}"`).join(", ")
   );
 }
 
-// Re-imports the raw so ACR re-develops it from the sidecar on disk. Two paths:
+// Re-imports the photo so ACR re-develops it from the state on disk. Two paths:
 //  - LINKED layer: relink to the same file (a relink can't embed, and it forces
-//    a fresh read of raw + sidecar). placedLayerReplaceContents is NOT used
-//    here - it force-embeds the smart object (verified in the wild), after which
-//    manual ACR edits and Update-AI-settings write-backs go into the PSD's
-//    private container instead of the sidecar.
+//    a fresh read of the photo and its settings). placedLayerReplaceContents is
+//    NOT used here - it force-embeds the smart object (verified in the wild),
+//    after which manual ACR edits and Update-AI-settings write-backs go into the
+//    PSD's private container instead of the file we read.
 //  - EMBEDDED layer (legacy imports): replaceContents, the proven path.
 // replaceContents operates on the SELECTED layer, hence the explicit select.
-// `wroteXml` is what we just put in the sidecar. Passing it makes the reload log
-// whether ACR wrote its own version back afterwards.
+// `wroteXml` is what we just wrote. Passing it makes the reload log whether ACR
+// wrote its own version back afterwards.
 //
 // KEEP THIS - it is the detector for the failure establishAcrSession() exists to
 // prevent. A "NO" means ACR is discarding whatever the user does in the apply
 // dialog, silently. If that ever starts appearing again, the import-time session
 // registration has stopped working.
 async function reloadRaw(target, label, wroteXml) {
-  const entry = await entryForPath(target.rawPath);
+  const entry = await entryForPath(target.filePath);
   const wasLinked = await isLinked(target.id);
   try {
     await action.batchPlay(
@@ -449,11 +580,11 @@ async function reloadRaw(target, label, wroteXml) {
   );
 
   if (wroteXml === undefined) return undefined;
-  const after = await readTextFileIfExists(sidecarPathFor(target.rawPath));
+  const after = await readState(target.filePath);
   const acrWroteBack = after !== null && after !== wroteXml;
   log(
     `${label}: ACR wrote back: ${acrWroteBack ? "YES" : "NO"} ` +
-      `(sidecar ${after === null ? "missing" : `${after.length}b`}, we wrote ${wroteXml.length}b). ` +
+      `(state ${after === null ? "missing" : `${after.length}b`}, we wrote ${wroteXml.length}b). ` +
       (acrWroteBack
         ? "Any edits made in the dialog are in the file and will be picked up."
         : "Edits made in the dialog were NOT persisted - re-open the layer in ACR to keep them.")
@@ -463,54 +594,70 @@ async function reloadRaw(target, label, wroteXml) {
 
 // --- the plan op ---------------------------------------------------------------
 
+// A working copy that has gone missing - swept from the cache, moved, deleted -
+// is a rebuild, not an error: its pixels are byte-identical to the user's
+// original and the registry mirrors the settings. Rebuild silently and carry on.
+// Raws are skipped: the file IS the user's photo, so there is nothing to rebuild
+// it from, and the caller should fail loudly instead.
+async function ensureFileAvailable(target) {
+  if (target.kind !== store.KIND_JPEG) return;
+  if (await photoCache.exists(target.filePath)) return;
+  log(`applyCameraRaw: working copy missing (${target.filePath}) - rebuilding from source`);
+  await photoCache.rebuildFrom(target.sourcePath, target.filePath, target.stateXml);
+}
+
 // Runs inside applyEditPlan's executeAsModal like every other handler.
 // `opts.skipReload` is set by applyEditPlan when an applyGeometry step follows
-// for the same raw: it will re-read this sidecar, fold these settings into its
+// for the same photo: it will re-read this state, fold these settings into its
 // own write, and reload once. Saves the user a second Camera Raw dialog.
 async function applyCameraRaw(params, opts = {}) {
   const doc = app.activeDocument;
   const target = await resolveRawTarget(doc, params.targetLayer);
+  await ensureFileAvailable(target);
 
-  // 1. Sidecar = the complete new develop state (model already merged).
-  // Harvest everything the model doesn't manage from the current sidecar
-  // first - AI-mask digests (so ACR reuses cached segmentations instead of
-  // demanding "Update AI settings"), attrs outside our vocabulary, opaque
-  // manual corrections - and carry it into the new write.
-  const sidecarPath = sidecarPathFor(target.rawPath);
-  const currentXml = await readTextFileIfExists(sidecarPath);
+  // 1. The write = the complete new develop state (model already merged).
+  // Harvest everything the model doesn't manage from the current state first -
+  // AI-mask digests (so ACR reuses cached segmentations instead of demanding
+  // "Update AI settings"), attrs outside our vocabulary, opaque manual
+  // corrections - and carry it into the new write.
+  const currentXml = await readState(target.filePath);
   const current = currentXml ? parseFull(currentXml) : null;
   // Geometry (crop/straighten/perspective/lens) is NOT part of the model's
   // full-state settings - see GEOMETRY_KEYS in xmpSidecar.js. Carry it forward
   // verbatim, or a plain "make it warmer" would silently un-crop the photo.
-  // With no sidecar yet this is the FIRST one written for this raw, so seed
-  // ACR's import defaults - otherwise the first edit turns lens correction off.
+  // With no state yet this is the FIRST write for this photo, so seed ACR's
+  // import defaults - otherwise the first edit turns lens correction off.
   const geometry = current ? current.geometry : DEFAULT_GEOMETRY;
   // The model authored these against the preview; ACR resolves them against the
   // sensor. Convert before writing (see maskSpace).
   const settings = maskSpace(params.settings, geometry, target.aspect, true);
   const xmlOut = serialize(settings, current ? current.extras : undefined, geometry);
-  // Save the bytes we are about to replace, so this exact state can be restored
-  // later by id - not "undo the last thing", which stops meaning anything once
-  // another edit has happened.
+  // Save what we are about to replace, so this exact state can be restored later
+  // by id - not "undo the last thing", which stops meaning anything once another
+  // edit has happened. Checkpoints hold the settings XML only, a few KB, never
+  // the image: cheap enough to keep ten deep per layer for both formats.
   const checkpoint = await registry.saveCheckpoint(
     doc,
     target.id,
     currentXml,
     "develop settings"
   );
-  await writeTextFile(sidecarPath, xmlOut);
-  log(`Sidecar written: ${sidecarPath}`, params.settings);
+  await writeState(target.filePath, xmlOut);
+  log(`Develop state written to ${store.describeLocation(target.filePath)}`, params.settings);
 
   if (opts.skipReload) {
-    log("applyCameraRaw: reload deferred to the applyGeometry step on this raw");
+    log("applyCameraRaw: reload deferred to the applyGeometry step on this photo");
   } else {
     await reloadRaw(target, "applyCameraRaw", xmlOut);
   }
 
   // Fallback copy of the applied state, in PREVIEW space (what the model was
-  // shown and sent). The sidecar on disk is the real source of truth and is
+  // shown and sent). The state on disk is the real source of truth and is
   // re-parsed every turn; this only matters if that file goes missing.
   await registry.updateSettings(doc, target.id, params.settings);
+  // The mirror is what makes a missing working copy rebuildable, so it has to
+  // track every write - see ensureFileAvailable.
+  await registry.updateStateMirror(doc, target.id, xmlOut);
   return { checkpoint, layer: target.name };
 }
 
@@ -519,7 +666,9 @@ module.exports = {
   openRawAsSmartObject,
   listRawLayers,
   resolveRawTarget,
+  verifiedPhotoLayers,
   reloadRaw,
+  ensureFileAvailable,
   maskSpace,
   RAW_EXTENSIONS,
 };

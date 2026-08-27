@@ -109,17 +109,26 @@ units follow Adobe's own `crs:` conventions (cross-checked against JarvisArt's).
 
 | Edit intent | Route |
 |---|---|
-| Global tone / WB / HSL / grading / detail on a RAW layer | `applyCameraRaw` flat keys |
-| Regional tone/color on RAW (sky, subject, gradients) | `applyCameraRaw` local masks |
-| Anything on JPEG/PSD documents | adjustment layers + masks |
-| Discrete toggleable layers, blend modes, groups | PS-native ops, even on raw docs |
+| Global tone / WB / HSL / grading / detail on a photo layer | `applyCameraRaw` flat keys |
+| Regional tone/color on a photo (sky, subject, gradients) | `applyCameraRaw` local masks |
+| Anything on a plain PSD / rasterized layer | adjustment layers + masks |
+| Content masks (sky/subject) on non-photo layers | `addMask` selectSky/selectSubject |
+| Discrete toggleable layers, blend modes, groups | PS-native ops, even on photo docs |
+
+Both **RAW and JPEG** go through Camera Raw — same ops, same vocabulary. The only
+difference is latitude: a JPEG is 8-bit and already clipped, so the prompt tells the
+model to make smaller moves (see `docs/jpeg-develop-design.md`). A JPEG's develop
+settings live *inside the image file*, not in a sidecar, so CreaCon edits a working
+copy and never writes to the user's original.
 
 Limitations:
 
-- RAW files only (CR2/CR3/NEF/ARW/RAF/ORF/RW2). JPEG/PSD documents keep the
-  adjustment-layer path. **DNG is not supported** (it embeds settings inside the file).
-- Raw smart objects created *outside* CreaCon (e.g. ACR's own "Open as Smart Object")
-  can't be develop-edited — their source path is unrecoverable. Use 📷 Open RAW.
+- RAW (CR2/CR3/NEF/ARW/RAF/ORF/RW2) and JPEG. **DNG is not supported** (it embeds
+  settings in a container the sidecar/packet mechanism can't reach).
+- JPEG develop needs the ACR preference *File Handling → JPEG/HEIC → automatically
+  open all supported JPEGs*, in addition to the sidecar preference below.
+- Smart objects created *outside* CreaCon (e.g. ACR's own "Open as Smart Object")
+  can't be develop-edited — their source path is unrecoverable. Use 📷.
 - The path registry persists across sessions (`rawRegistry.json` in the plugin data
   folder, keyed by document path → layer ID, so multiple raws per document are fine).
   Caveats: raws imported into a **never-saved** document are tracked for the current
