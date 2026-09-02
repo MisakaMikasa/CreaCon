@@ -490,6 +490,9 @@ async function photoLayersIn(doc) {
     if (info.path) {
       const entry = await registry.photoFor(info.path);
       if (!entry) continue; // a smart object CreaCon never imported
+      // Seen in a real document, so it is not abandoned. This is the only
+      // evidence the cache sweep has that a working copy is still wanted.
+      await registry.touch(info.path);
       const key = pathKey.canonical(info.path);
       const already = byPath.get(key);
       if (already) {

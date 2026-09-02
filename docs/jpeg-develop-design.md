@@ -7,20 +7,18 @@ Status: **working end to end in the app** (first successful JPEG develop
 2026-08-26). Everything marked *verified* below was proven on real files, not
 reasoned from docs.
 
-Built: `xmpEmbedded.js` (the JPEG container), `developStore.js` (the seam),
-`photoCache.js` (working copies + rebuild), copy-on-import, the registry's state
-mirror, `verifiedPhotoLayers` (§3.5a), and the prompt's latitude rules. Covered
-by `scripts/test-xmp-embedded.js`.
+**Built:** `xmpEmbedded.js` (the JPEG container), `developStore.js` (the storage
+seam), `photoCache.js` (working copies and rebuild), `cacheSweep.js` (the 🧹
+cleanup), `pathKey.js` and the path-keyed registry, copy-on-import, and the
+prompt's latitude rules. Covered by `scripts/test-xmp-embedded.js`,
+`test-registry.js` and `test-cache-sweep.js`.
 
-**Not built yet:** the liveness sweep of §3.4 and the PSD link-table parser it
-needs. Nothing is deleted from the cache today, so its absence is safe, only
-untidy — working copies accumulate in the plugin data folder until someone
-clears them by hand.
+**Not built, and no longer needed:** the PSD link-table parser (§3.8).
 
 **Also outstanding:** develop applies write to files OUTSIDE the open document
 (a sidecar beside the user's raw, or a working copy), where Photoshop's undo
 cannot reach. Checkpoints cover this but are memory-only and session-scoped, so a
-plugin reload loses them — which is exactly how the §3.5a incident became
+plugin reload loses them — which is exactly how the §3.6 incident became
 unrecoverable. A durable `.creacon-backup` written the first time CreaCon ever
 touches a file would bound that damage; the old `acrReloadSpike` did this and it
 is maybe twenty lines.
@@ -155,8 +153,10 @@ path kept** — which is precisely why `rawRegistry.js` had to exist in the firs
 place. Each record also carries a UUID that appears in the per-layer block, so
 **layer → file path is recoverable from the PSD alone.**
 
-That turns orphan detection from guesswork into a real reference check, and it
-needs no Photoshop API.
+That turned orphan detection from guesswork into a real reference check. It also
+turned out to be unnecessary: the live API exposes the same path per layer, which
+is simpler and works on unsaved documents too (§3.6, §3.8). The finding is kept
+because it is what made a working-copy cache defensible in the first place.
 
 ## 3. The design
 
@@ -196,9 +196,9 @@ photo two ways in one document just works.
 
 Paths are the sharp edge here, so these are rules, not preferences:
 
-- **Never key on a document's name.** Users rename documents and reuse names
-  across projects. Identity comes from the linked *file path* recorded in the
-  PSD, and from the per-record UUID.
+- **Never key on a document's name, or on a layer id.** Users rename documents,
+  and Photoshop reissues layer ids. Identity is the linked *file path*, which the
+  layer reports itself (§3.6).
 - **Never hardcode a cache location.** Resolve it at runtime from the platform's
   data/Documents folder. Nothing in the codebase should contain a literal user
   path.
@@ -212,14 +212,42 @@ Paths are the sharp edge here, so these are rules, not preferences:
 - Treat an absolute path as a hint that can go stale. A missing working copy is a
   repair job, not an error (§3.5).
 
-### 3.4 Liveness and cleanup
+### 3.4 Liveness and cleanup — BUILT
 
-1. Whenever a saved document is in play, read its own file, parse the linked-file
-   table, and stamp every referenced cache file as seen.
-2. A cache file unseen for a long grace period is a **candidate**, never an
-   automatic deletion.
-3. Skip any candidate whose original no longer exists — our copy is then the
-   user's last copy of that photo.
+`cacheSweep.js`, offered from the 🧹 panel button. Simpler than originally
+designed: because a layer reports its own path (§3.6), liveness needs no PSD
+parsing — `photoLayersIn` stamps `lastSeenAt` on every layer walk, once a turn.
+
+**Never automatic.** "Is this file still used?" cannot be answered with
+certainty. A document that is not open right now is not abandoned — it might be
+opened tomorrow, or sit on a drive that is currently unplugged. The available
+evidence ("a document referencing it was open at some point") proves *use* and
+never proves *disuse*. So the sweep proposes and a human decides.
+
+Four rules, in `classifyFile` — pure, and tested, because this is the logic that
+deletes files:
+
+1. **No registry entry → never proposed.** Origin unknown, so it cannot be
+   rebuilt and deleting it is irreversible.
+2. **Original missing → never proposed.** The copy then holds the only surviving
+   pixels of that photo.
+3. **Never observed → marked, not swept.** Treating "no evidence" as "abandoned"
+   would sweep everything imported before stamping existed, on the very first
+   run. The clock starts at first sighting.
+4. **Otherwise, removable after 90 idle days.**
+
+The grace period is a judgement call rather than a proof, and it is allowed to be
+because of §3.5: a copy deleted too early costs a rebuild, not an edit. That
+holds *only* while the original exists, which is what rule 2 protects.
+
+`lastSeenAt` persists at most every six hours — the stamp fires once a turn and
+is measured in days, so writing it each time would rewrite the registry
+constantly, but never writing it at all would make every file look unused after a
+restart.
+
+A non-empty rule-1 bucket in practice would argue for writing `sourcePath` into
+the working copy's own XMP, making each copy self-describing and immune to the
+registry being lost.
 
 ### 3.5 Deletion is recoverable, by construction
 
@@ -238,7 +266,7 @@ working copy missing on reopen
 So the sweep doesn't have to be perfect, and a broken link from moving files
 repairs itself.
 
-### 3.5a Layer identity must be verified, not assumed
+### 3.6 The layer-id incident, and what it changed
 
 Found the hard way during the first live JPEG test (2026-08-26), and worth
 recording in full because the failure was silent, destructive, and cost a user's
@@ -259,32 +287,34 @@ document earlier and removed, matched its stale entry, and CreaCon wrote the
 JPEG's develop settings into an unrelated photo's sidecar — a file the user had
 not opened, in a different folder.
 
-So a registry hit is a *claim*, and it is now checked: the layer must actually
-contain the file the entry names, compared by the file name Photoshop reports for
-a smart object. A filename is weak evidence of identity but strong evidence of
-NON-identity, and non-identity is what has to be caught. Entries proven stale are
-forgotten, so they cannot capture the next layer to reuse that id either.
+**The first fix was to verify, and it was the wrong shape.** A registry hit
+became a *claim*, checked against the file name Photoshop reports for the layer,
+and dropped on mismatch. It worked — a filename is weak evidence of identity but
+strong evidence of NON-identity, and non-identity was what needed catching — but
+it left the bad key in place and bolted a guard onto it. Worth recording as the
+interim step, because the reflex to add a check is strong and was not the best
+available move.
 
-The check is deliberately one-sided: an entry is dropped only on positive
-evidence of mismatch. When Photoshop reports no file name, the entry is kept and
-a warning logged — a check that cannot see must not start deleting mappings that
-were working.
+**The better fix was to remove the claim.** A linked layer reports its own source
+path at `smartObject.link._path` on the full layer descriptor — confirmed
+2026-08-26. (Not `smartObjectMore.link`, which genuinely is empty; unrelated
+fields, and the older note in `cameraRaw.js` refers to the latter.) So the path
+can be the key, taken from the layer, leaving nothing to go stale. Verification
+by comparison no longer exists. See §3.7.
 
-`registry.rawLayersIn` is now internal and unverified; `verifiedPhotoLayers` is
-the only supported way to read the registry.
+**Two lessons worth keeping separate from the mechanism:**
 
-**A linked layer reports its full path** — `smartObject.link._path` on the full
-layer descriptor, confirmed 2026-08-26 by the layer/file report. (Not
-`smartObjectMore.link`, which genuinely is empty; the two are unrelated fields
-and the older note in `cameraRaw.js` was about the latter.)
+- A key that is *usually* unique is not an identity. Layer ids are unique at any
+  instant and reused across time, and the failure only appears once a layer has
+  been deleted — long after the code looked correct.
+- The damage was unbounded because the write went to a file **outside the open
+  document**, where Photoshop's own undo cannot reach, and the only safety net
+  was a memory-only checkpoint that the session took with it. That gap is still
+  open; see the status block.
 
-**That removed the problem rather than catching it — see §3.6.** Verification by
-comparison was an interim step and no longer exists: the registry is keyed by the
-path, and the path comes from the layer, so there is no claim left to be stale.
+### 3.7 The registry is keyed by file path
 
-### 3.6 The registry is keyed by file path
-
-Because a linked layer reports its own path (§3.5a), Photoshop is the authority
+Because a linked layer reports its own path (§3.6), Photoshop is the authority
 on *which file* a layer holds and the registry only has to store what Photoshop
 does not know: `sourcePath` (which original a working copy came from), `kind`,
 `lastSettings`, `stateXml`, `aspect`.
@@ -321,17 +351,16 @@ versions, which report no path. They keep the old key and its id-reuse risk,
 which cannot be fixed for them — the information needed is exactly what embedding
 discards.
 
-**Still open:** working copies are never swept, so the cache grows until cleared
-by hand. `lastSeenAt` exists and is stamped, ready for that. Pruning naively is
-wrong — Photoshop's undo restores a deleted layer *with its original id*, and a
-document that is simply not open right now is not abandoned — so it needs a grace
-period and explicit confirmation.
+**Dead entries still accumulate** for photos whose file is gone entirely. The
+sweep removes an entry when it removes its working copy, but nothing prunes an
+entry whose file vanished by other means. Harmless — a path key cannot capture an
+unrelated layer the way a layer id could — just litter.
 
-### 3.7 The PSD link table, and why it is no longer needed
+### 3.8 The PSD link table, and why it is no longer needed
 
 §2.6 established that a PSD lists its linked files' full paths on disk, and that
 was going to be the mechanism for both liveness and Save As recovery. The live
-API turned out to expose the same thing per layer (§3.5a), which is simpler,
+API turned out to expose the same thing per layer (§3.6), which is simpler,
 cheaper than parsing a 400 MB file, and works on unsaved documents.
 
 The file-parsing route is therefore **not built**, and is only worth revisiting
@@ -371,15 +400,24 @@ but it lands in `backend/prompt.py`, not in deleted executor code.
 
 ## 6. Open items
 
-- Whether the live Photoshop API exposes a linked layer's path directly. Would be
-  cheaper than parsing a large PSD and would cover *unsaved* documents, which have
-  no file to read. Read-only probe: `CreaCon/src/spike/linkPathProbe.js`.
-  Not blocking — the file parser is the fallback and it works.
+- **A durable backup before the first write to any file.** The one real gap. See
+  the status block: applies write outside the open document, beyond Photoshop's
+  undo, and checkpoints die with the session. `acrReloadSpike` already did this
+  with a `.creacon-backup` file; it is about twenty lines.
+- **Independent versions of one photo.** Duplicating a layer gives two layers on
+  one file, so they share a develop state and cannot be graded differently. The
+  chat warns and says what to do instead. For JPEG this is solvable — import
+  copies anyway, so a duplicate could get its own copy — but it needs UI, since
+  silently writing another 11 MB because someone pressed Ctrl+J is worse than the
+  limitation.
+- **Dead registry entries** for photos whose file vanished by means other than
+  the sweep. Litter, not risk (§3.7).
 - Whether the import-time `establishAcrSession` dance is needed for JPEG. Likely
-  yes, same cause; verify during the build.
+  yes, same cause; it runs for JPEG today and has not been isolated.
 - Whether `DEFAULT_GEOMETRY` seeding is relevant to JPEG. It exists so that
   writing a sidecar doesn't silently disable ACR's default lens correction on a
   RAW; JPEGs have no lens profile applied by default, so it may be a no-op.
+  Currently skipped for JPEG.
 - TIFF and HEIC are the same mechanism in principle and are untested.
 
 ## 7. Provenance
@@ -389,11 +427,15 @@ The spikes are kept as the record, with their results in their file headers:
 - `CreaCon/src/spike/jpegAcrSpike.js` — storage location, and whether ACR honours
   packets we write. Both runs' results are recorded in the header.
 - `CreaCon/src/spike/linkPathProbe.js` — read-only layer/file report: what
-  Photoshop says is behind each layer, what the registry claims, and which
-  registry entries have outlived their layer. Answers §6's first item and
-  §3.5a's open questions 2 and 3.
+  Photoshop says is behind each layer, what the registry knows about it, and
+  which known photos this document does not use. This is what established
+  `smartObject.link._path` (§3.6), and it dumps every path-shaped value in the
+  descriptor, which is how that field was found in the first place.
 
 Both are unwired — their questions are answered and the files are kept as the
 record of how. Re-wire `linkPathProbe.js` to a panel button when working on the
-registry; it is the fastest way to see the current layer/file/registry state and
-which entries have outlived their layer.
+registry; the header comment says how, and it is the fastest way to see the
+current layer/file/registry state.
+
+The Python parsers behind §2.6 (`psdlinks.py`, `lnk2rec.py`) live in the session
+scratchpad rather than the repo, since §3.8 explains why nothing needs them.

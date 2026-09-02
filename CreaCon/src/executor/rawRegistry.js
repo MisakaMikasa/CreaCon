@@ -194,19 +194,26 @@ async function updateStateMirror(filePath, xml) {
   }
 }
 
-// Marks a working copy as still in use. The cache sweep uses this to tell a live
-// file from an abandoned one; writing it here costs nothing because the caller is
-// already walking the layers.
+// How stale an on-disk stamp may get before a touch bothers to rewrite the file.
+// This fires on every layer walk - once per chat turn - so persisting each time
+// would rewrite the registry constantly for a value measured in days. Six hours
+// keeps writes to a handful a day while never losing more than six hours of
+// evidence, which is nothing against a 90-day grace period.
+const TOUCH_PERSIST_MS = 6 * 60 * 60 * 1000;
+
+// Marks a photo as still in use, for the cache sweep to tell a live working copy
+// from an abandoned one. Cheap: the caller is already walking the layers.
 async function touch(filePath) {
   await ensureLoaded();
   const entry = store.photos[pathKey.canonical(filePath)];
-  if (entry) {
-    entry.lastSeenAt = Date.now();
-    // Not persisted immediately: this fires on every turn, and losing the most
-    // recent stamp on a crash only means one extra day of grace.
-    return true;
-  }
-  return false;
+  if (!entry) return false;
+  const now = Date.now();
+  const stale = !entry.lastSeenAt || now - entry.lastSeenAt > TOUCH_PERSIST_MS;
+  entry.lastSeenAt = now;
+  // Must reach disk eventually or the sweep sees everything as never-used and
+  // proposes deleting files that are in a document open right now.
+  if (stale) await saveToDisk();
+  return true;
 }
 
 async function allPhotos() {
