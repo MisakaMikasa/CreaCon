@@ -311,6 +311,56 @@ function render() {
   container.scrollTop = container.scrollHeight;
 }
 
+// Duplicating a photo layer in Photoshop does NOT duplicate the photo - both
+// layers point at the same file, and a file has exactly one develop state. So
+// the two layers are locked together forever: any edit changes both, and there
+// is no way to grade them differently.
+//
+// That is genuinely surprising, and silent, so say it once. Warned per set of
+// duplicates rather than per turn, so it does not become noise the user learns
+// to scroll past.
+const warnedDuplicates = new Set();
+
+async function warnAboutDuplicateLayers() {
+  try {
+    const { app } = require("photoshop");
+    const { photoLayersIn } = require("./executor/cameraRaw");
+    const doc = app.activeDocument;
+    if (!doc) return;
+
+    for (const photo of await photoLayersIn(doc)) {
+      const names = photo.aliases || [photo.name];
+      if (names.length < 2) continue;
+
+      const key = `${photo.filePath}::${names.slice().sort().join("|")}`;
+      if (warnedDuplicates.has(key)) continue;
+      warnedDuplicates.add(key);
+
+      const listed = names.map((n) => `"${n}"`).join(" and ");
+      // The remedy differs by format. A JPEG is copied on import, so importing
+      // the same photo again really does give an independent second version.
+      // A raw is edited in place, so the user has to make the copy themselves.
+      const remedy =
+        photo.kind === "jpeg"
+          ? "To grade this photo two different ways, use 📷 to import it a second time - " +
+            "CreaCon copies each import, so the two versions stay independent."
+          : "To grade this photo two different ways, duplicate the raw file on disk and " +
+            "import the copy with 📷 - a raw file holds a single set of develop settings.";
+
+      conversation.push({
+        role: "system",
+        text:
+          `Heads up: layers ${listed} are the same photo. Duplicating a layer doesn't ` +
+          "duplicate the photo - both point at one file, and a file has one set of develop " +
+          `settings, so any edit changes both. ${remedy}`,
+      });
+    }
+  } catch (err) {
+    // A warning is a nicety; never let it stop the message being sent.
+    log("Duplicate-layer check skipped:", formatError(err));
+  }
+}
+
 async function onSend() {
   const input = el("chatInput");
   const text = (input.value || "").trim();
@@ -318,6 +368,12 @@ async function onSend() {
 
   input.value = "";
   conversation.push({ role: "user", text });
+  // Before the thinking bubble, not after: the warning explains why the edit
+  // about to be planned will land on two layers at once, and pushing it later
+  // would render it underneath "Thinking…". It also reaches the model as a
+  // [note], which is the point - it should plan for one photo, not two.
+  await warnAboutDuplicateLayers();
+
   const thinkingMsg = { role: "assistant", text: "", thinking: true };
   conversation.push(thinkingMsg);
   busy = true;

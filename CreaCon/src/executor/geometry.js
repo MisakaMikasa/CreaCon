@@ -164,9 +164,8 @@ async function applyGeometry(params) {
   const extras = current ? withoutUprightCache(current.extras) : undefined;
 
   const xmlOut = serialize(current ? current.settings : {}, extras, geometry);
-  const checkpoint = await registry.saveCheckpoint(
-    doc,
-    target.id,
+  const checkpoint = registry.saveCheckpoint(
+    target.filePath,
     currentXml,
     params.upright && params.upright !== "off" ? "perspective correction" : "crop / straighten"
   );
@@ -191,13 +190,12 @@ async function applyGeometry(params) {
   // only a fallback for a missing state file, but a mismatched space would be a
   // silent wrong answer rather than an error.
   await registry.updateSettings(
-    doc,
-    target.id,
+    target.filePath,
     maskSpace(current ? current.settings : {}, finalGeometry, target.aspect, false)
   );
   // Mirror what ACR ended up with, not what we asked for: an Upright rewrites
   // the state, and a rebuild has to restore the corrected version.
-  await registry.updateStateMirror(doc, target.id, xmlAfter || xmlOut);
+  await registry.updateStateMirror(target.filePath, xmlAfter || xmlOut);
   log(`applyGeometry: ${report.summary}`);
   return report;
 }
@@ -214,7 +212,7 @@ async function applyGeometry(params) {
 async function restoreCheckpoint(checkpointId, targetLayer) {
   const doc = app.activeDocument;
   const target = await resolveRawTarget(doc, targetLayer);
-  const previous = await registry.checkpointXml(doc, target.id, checkpointId);
+  const previous = registry.checkpointXml(target.filePath, checkpointId);
   if (previous === undefined) {
     throw new Error(
       "That restore point is gone - checkpoints last for the session and only the " +
@@ -225,12 +223,7 @@ async function restoreCheckpoint(checkpointId, targetLayer) {
 
   // Restoring is itself an edit, so snapshot what it replaces. Without this,
   // going back would be a one-way trip.
-  await registry.saveCheckpoint(
-    doc,
-    target.id,
-    await readState(target.filePath),
-    "before restore"
-  );
+  registry.saveCheckpoint(target.filePath, await readState(target.filePath), "before restore");
   let restoredXml = previous;
   if (previous === null) {
     // There was no develop state before: the closest restore is ACR's import
@@ -246,11 +239,10 @@ async function restoreCheckpoint(checkpointId, targetLayer) {
   // just been restored.
   const restored = previous === null ? null : parseFull(previous);
   await registry.updateSettings(
-    doc,
-    target.id,
+    target.filePath,
     restored ? maskSpace(restored.settings, restored.geometry, target.aspect, false) : {}
   );
-  await registry.updateStateMirror(doc, target.id, restoredXml);
+  await registry.updateStateMirror(target.filePath, restoredXml);
   // The checkpoint is NOT consumed: restoring is itself an edit, so it saved a
   // checkpoint of its own, and going back and forth between two states has to
   // stay possible.

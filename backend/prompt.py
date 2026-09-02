@@ -699,8 +699,20 @@ def layer_context_block(context) -> str:
         else:
             label = "RAW smart object"
             latitude = " Full raw latitude."
+        # Duplicated layers share ONE file and therefore one develop state.
+        # Without this the model treats them as separate photos, plans a
+        # different look for each, and only the last one survives.
+        aliases = raw.get("aliases") or []
+        also = ""
+        if aliases:
+            names = ", ".join(f'"{n}"' for n in aliases)
+            also = (
+                f" This same photo also appears as the duplicated layer(s) {names} - "
+                "they share one file and one develop state, so edit it ONCE; "
+                "a second look for the same photo would just overwrite the first."
+            )
         lines.append(
-            f'{label} "{raw.get("layer")}" (develop-editable via applyCameraRaw).{latitude} '
+            f'{label} "{raw.get("layer")}" (develop-editable via applyCameraRaw).{latitude}{also} '
             f"Current develop settings: {state}"
         )
     return "\n".join(lines)

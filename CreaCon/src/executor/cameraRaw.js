@@ -18,6 +18,7 @@ const { serialize, parse, parseFull, DEFAULT_GEOMETRY } = require("./xmpSidecar"
 const geometryMath = require("./geometryMath");
 const registry = require("./rawRegistry");
 const store = require("./developStore");
+const pathKey = require("./pathKey");
 const photoCache = require("./photoCache");
 
 // Kept as an export for callers that still speak in raw extensions; the real
@@ -122,6 +123,19 @@ async function establishAcrSession(layerId, report) {
   }
 }
 
+// Removes a working copy that was created for an import which then did not
+// happen. Only ever called with a path this function's caller just created, and
+// only for JPEG - a raw's filePath is the user's own photo.
+async function discardWorkingCopy(kind, filePath) {
+  if (kind !== store.KIND_JPEG) return;
+  try {
+    await store.removeFileIfExists(filePath);
+    log(`Discarded unused working copy: ${filePath}`);
+  } catch (err) {
+    log("Couldn't discard unused working copy (harmless, it will be swept):", formatError(err));
+  }
+}
+
 // --- ingestion (the panel's "Open photo" button) -----------------------------
 
 // Lets the user pick a photo, places it as a LINKED smart object, and registers
@@ -158,8 +172,8 @@ async function openRawAsSmartObject(report, askChoice) {
   // corrupting both. A JPEG has no such limit here: it is copied per import, so
   // grading the same photo two ways in one document just works.
   if (kind === store.KIND_RAW) {
-    const already = (await verifiedPhotoLayers(app.activeDocument)).find(
-      (l) => l.filePath === sourcePath
+    const already = (await photoLayersIn(app.activeDocument)).find((l) =>
+      pathKey.sameFile(l.filePath, sourcePath)
     );
     if (already) {
       report(
@@ -198,6 +212,10 @@ async function openRawAsSmartObject(report, askChoice) {
     const fileName = picked.name || sourcePath;
     const choice = askChoice ? await askChoice(fileName) : "fresh";
     if (choice === "cancel") {
+      // The working copy was made before this dialog (ACR reads develop state at
+      // place time, so it has to exist first). Cancelling must not leave an
+      // orphaned copy behind - nothing else would ever clean it up.
+      await discardWorkingCopy(kind, filePath);
       report("Import cancelled.");
       return null;
     }
@@ -226,44 +244,51 @@ async function openRawAsSmartObject(report, askChoice) {
   const token = localFileSystem.createSessionToken(await entryForPath(filePath));
   let layerName = null;
   let placedId = null;
-  await core.executeAsModal(
-    async () => {
-      await action.batchPlay(
-        [
-          {
-            // LINKED, not embedded (spike-verified): a linked SO routes manual
-            // ACR-dialog edits into the same place this executor reads and
-            // writes, so user edits and CreaCon edits merge instead of
-            // clobbering. Embedded SOs lock manual edits in a container no
-            // script can read, and do not even retain their source path.
-            // Costs: the file must stay put, and the PSD isn't self-contained.
-            _obj: "placeEvent",
-            null: { _path: token, _kind: "local" },
-            linked: true,
-            _options: { dialogOptions: "dontDisplay" },
-          },
-        ],
-        {}
-      );
-      const placed = app.activeDocument.activeLayers[0];
-      if (!placed) throw new Error("Place succeeded but no active layer found");
-      // Record the frame proportions while the layer is still uncropped - mask
-      // coordinate conversion needs them once a rotated crop exists.
-      await registry.register(app.activeDocument, placed.id, filePath, aspectOf(placed), {
-        sourcePath,
-        kind,
-      });
-      if (!keptExisting) {
-        // Fresh import = camera defaults; {} is the accurate develop state.
-        // (When keeping existing edits, lastSettings stays null so the
-        // per-turn context falls back to parsing the file itself.)
-        await registry.updateSettings(app.activeDocument, placed.id, {});
-      }
-      layerName = placed.name;
-      placedId = placed.id;
-    },
-    { commandName: "CreaCon: open photo" }
-  );
+  try {
+    await core.executeAsModal(
+      async () => {
+        await action.batchPlay(
+          [
+            {
+              // LINKED, not embedded (spike-verified): a linked SO routes manual
+              // ACR-dialog edits into the same place this executor reads and
+              // writes, so user edits and CreaCon edits merge instead of
+              // clobbering. Embedded SOs lock manual edits in a container no
+              // script can read, and do not even retain their source path.
+              // Costs: the file must stay put, and the PSD isn't self-contained.
+              _obj: "placeEvent",
+              null: { _path: token, _kind: "local" },
+              linked: true,
+              _options: { dialogOptions: "dontDisplay" },
+            },
+          ],
+          {}
+        );
+        const placed = app.activeDocument.activeLayers[0];
+        if (!placed) throw new Error("Place succeeded but no active layer found");
+        // Record the frame proportions while the layer is still uncropped - mask
+        // coordinate conversion needs them once a rotated crop exists.
+        await registry.registerPhoto(filePath, {
+          sourcePath,
+          kind,
+          aspect: aspectOf(placed),
+        });
+        if (!keptExisting) {
+          // Fresh import = camera defaults; {} is the accurate develop state.
+          // (When keeping existing edits, lastSettings stays null so the
+          // per-turn context falls back to parsing the file itself.)
+          await registry.updateSettings(filePath, {});
+        }
+        layerName = placed.name;
+        placedId = placed.id;
+      },
+      { commandName: "CreaCon: open photo" }
+    );
+  } catch (err) {
+    // Placement failed after the copy was made - same orphan problem as cancel.
+    await discardWorkingCopy(kind, filePath);
+    throw err;
+  }
   log(`Opened ${kind} as smart object: "${layerName}" <- ${filePath}`);
 
   if (kind === store.KIND_JPEG) {
@@ -351,11 +376,18 @@ function maskSpace(settings, geometry, aspect, toSensor) {
 // External-change detection: the state on disk (sidecar for a raw, embedded
 // packet for a JPEG) is re-read every turn, so a manual ACR edit, a Lightroom
 // edit, or ACR's own AI-digest write-back is picked up and adopted.
+// The OTHER layer names this same photo appears under. Duplicating a linked
+// smart object gives two layers on one file; they share one develop state, so
+// the model has to be told they are one photo and not two - otherwise it plans
+// two different looks for the same file and the second silently wins.
+function duplicates(entry) {
+  const names = entry.aliases || [entry.name];
+  return names.filter((n) => n !== entry.name);
+}
+
 async function listRawLayers(doc) {
   const raws = [];
-  // Verified, not merely registered: an unverified entry here would tell the
-  // model it can develop a layer that actually points at someone else's photo.
-  for (const entry of await verifiedPhotoLayers(doc)) {
+  for (const entry of await photoLayersIn(doc)) {
     const { name, filePath, lastSettings, aspect } = entry;
     // The model is told which format each layer is, because it decides how hard
     // the photo can be pushed - a JPEG is 8-bit and already clipped, so
@@ -368,7 +400,7 @@ async function listRawLayers(doc) {
       // externally. The last applied state is the best guess left. (For a JPEG
       // this is also the signal that the working copy needs rebuilding; the
       // apply path handles that, and a read-only context turn should not.)
-      raws.push({ layer: name, kind, settings: lastSettings || null });
+      raws.push({ layer: name, kind, aliases: duplicates(entry), settings: lastSettings || null });
       continue;
     }
     // ALWAYS re-parse. There was once a hash-compare fast path here that returned
@@ -383,46 +415,33 @@ async function listRawLayers(doc) {
     // them off the preview, which is the cropped view. Show it preview
     // coordinates so the numbers it sees match the picture it sees -
     // applyCameraRaw converts back on the way out.
-    raws.push({ layer: name, kind, settings: maskSpace(settings, geometry, aspect, false) });
+    raws.push({
+      layer: name,
+      kind,
+      aliases: duplicates(entry),
+      settings: maskSpace(settings, geometry, aspect, false),
+    });
   }
   return raws;
 }
 
-// --- registry verification -----------------------------------------------------
+// --- resolving layers to photos ---------------------------------------------------
 //
-// THE BUG THIS EXISTS TO PREVENT. The registry maps (document, layer id) -> file,
-// but Photoshop REUSES layer ids after a layer is deleted. A JPEG placed into a
-// document once inherited the id of a raw that had been removed from it, matched
-// that raw's stale entry, and CreaCon wrote the JPEG's develop settings into an
-// unrelated photo's sidecar - corrupting a file the user had not even opened.
+// Photoshop is the authority on WHICH FILE a layer holds; the registry only adds
+// what Photoshop does not know (the original a working copy came from, the
+// format, the last applied settings, the frame aspect).
 //
-// So a registry hit is a claim, not a fact, and it gets checked: the layer has to
-// actually contain the file the entry names. The check is by FILENAME, which
-// Photoshop exposes for a smart object even when the full path is not readable.
-// A filename is weak evidence of identity but strong evidence of NON-identity,
-// and non-identity is exactly what has to be caught here.
-//
-// Deliberately conservative: an entry is dropped only on POSITIVE evidence of a
-// mismatch. When Photoshop tells us nothing about a layer's file, the entry is
-// kept and a warning logged - a check that cannot see must not start deleting
-// people's working mappings.
-//
-// A LINKED smart object reports its FULL PATH at smartObject.link._path on the
-// full layer descriptor (confirmed 2026-08-26 by the layer/file report). That is
-// the strong check and the one normally used. Note it is smartObject.link, not
-// smartObjectMore.link - the latter genuinely is empty, which is what the older
-// note in this file was about.
-//
-// Embedded smart objects expose no path (that is the whole reason the registry
-// exists), so those fall back to comparing the file NAME via fileReference.
-// Weak evidence of identity - two files with the same name in different folders
-// look identical - but still strong evidence of NON-identity, which is what has
-// to be caught.
-function baseNameOf(nativePath) {
-  return (nativePath || "").split(/[\\/]/).pop().toLowerCase();
-}
+// That ordering is the whole point. The registry used to be asked "what file is
+// layer 6?", and its answer could be left over from a DIFFERENT layer 6 that had
+// since been deleted - Photoshop reuses layer ids. That once wrote one photo's
+// develop settings into an unrelated photo's sidecar. Now the layer is asked
+// first and its answer is the key, so there is no claim left to be stale.
 
 // What Photoshop says is behind a layer: { path, name }, either possibly null.
+// A LINKED smart object carries its source path at smartObject.link._path on the
+// full layer descriptor (confirmed 2026-08-26). Note smartObject.link, NOT
+// smartObjectMore.link - the latter really is empty, and is what the older note
+// at the top of this file refers to.
 async function layerFileInfo(layerId) {
   try {
     const result = await action.batchPlay(
@@ -435,61 +454,91 @@ async function layerFileInfo(layerId) {
     const path = typeof link._path === "string" && link._path ? link._path : null;
     const name =
       (descriptor.smartObjectMore || {}).fileReference || so.fileReference || null;
-    return { path, name: typeof name === "string" && name ? name : null };
+    return {
+      isSmartObject: Boolean(descriptor.smartObject),
+      path,
+      name: typeof name === "string" && name ? name : null,
+    };
   } catch (err) {
     log("layerFileInfo failed:", formatError(err));
-    return { path: null, name: null };
+    return { isSmartObject: false, path: null, name: null };
   }
 }
 
-// Registered photo layers in this document that survive verification. Stale
-// entries are forgotten as they are found, so they cannot capture the next layer
-// to reuse that id either.
-async function verifiedPhotoLayers(doc) {
-  const claimed = await registry.rawLayersIn(doc);
-  const verified = [];
-  for (const entry of claimed) {
-    const actual = await layerFileInfo(entry.id);
-
-    // Strong check: full path. photoCache.canonical folds case, separators and
-    // the file:/// form, so the comparison survives Photoshop handing back a
-    // different spelling of the same location.
-    if (actual.path) {
-      if (photoCache.canonical(actual.path) === photoCache.canonical(entry.filePath)) {
-        verified.push(entry);
-        continue;
-      }
-      log(
-        `verifiedPhotoLayers: STALE ENTRY DROPPED - layer "${entry.name}" (id ${entry.id}) ` +
-          `is linked to "${actual.path}" but was mapped to "${entry.filePath}". The mapping ` +
-          "is discarded rather than written to."
-      );
-      await registry.forget(doc, entry.id);
-      continue;
-    }
-
-    // Weak check: file name only (embedded smart objects expose no path).
-    if (actual.name) {
-      if (actual.name.toLowerCase() === baseNameOf(entry.filePath)) {
-        verified.push(entry);
-        continue;
-      }
-      log(
-        `verifiedPhotoLayers: STALE ENTRY DROPPED - layer "${entry.name}" (id ${entry.id}) ` +
-          `contains "${actual.name}" but was mapped to "${baseNameOf(entry.filePath)}". ` +
-          "Photoshop reused a deleted layer's id; the mapping is discarded."
-      );
-      await registry.forget(doc, entry.id);
-      continue;
-    }
-
-    log(
-      `verifiedPhotoLayers: layer "${entry.name}" (id ${entry.id}) reports neither path nor ` +
-        `file name; keeping its mapping to ${entry.filePath} unverified.`
-    );
-    verified.push(entry);
+function flattenLayers(layers, acc = []) {
+  for (const layer of layers) {
+    acc.push(layer);
+    if (layer.layers && layer.layers.length) flattenLayers(layer.layers, acc);
   }
-  return verified;
+  return acc;
+}
+
+// Every develop-editable photo layer in the document.
+//
+// Two layers can be linked to the SAME file - duplicating a linked smart object
+// does exactly that - and one file has one develop state, so they are one photo
+// with two names. They are collapsed into a single entry carrying `aliases`, and
+// resolveRawTarget accepts any of those names. Reporting them separately would
+// invite the model to write two different states to one file.
+async function photoLayersIn(doc) {
+  const out = [];
+  const byPath = new Map();
+  for (const layer of flattenLayers(doc.layers)) {
+    const info = await layerFileInfo(layer.id);
+    if (!info.isSmartObject) continue;
+
+    if (info.path) {
+      const entry = await registry.photoFor(info.path);
+      if (!entry) continue; // a smart object CreaCon never imported
+      const key = pathKey.canonical(info.path);
+      const already = byPath.get(key);
+      if (already) {
+        already.aliases.push(layer.name);
+        continue;
+      }
+      const resolved = {
+        id: layer.id,
+        name: layer.name,
+        aliases: [layer.name],
+        filePath: entry.filePath,
+        sourcePath: entry.sourcePath,
+        kind: entry.kind || store.kindOf(entry.filePath) || store.KIND_RAW,
+        lastSettings: entry.lastSettings,
+        stateXml: entry.stateXml,
+        aspect: entry.aspect,
+        legacy: false,
+      };
+      byPath.set(key, resolved);
+      out.push(resolved);
+      continue;
+    }
+
+    // No path: an embedded smart object from a version that placed embedded.
+    // These still carry the layer-id risk, which cannot be fixed for them - the
+    // information needed to fix it is what embedding throws away.
+    const legacy = await registry.legacyFor(doc, layer.id);
+    if (!legacy || !legacy.filePath) continue;
+    if (info.name && info.name.toLowerCase() !== pathKey.baseName(legacy.filePath).toLowerCase()) {
+      log(
+        `photoLayersIn: skipping legacy entry for layer "${layer.name}" (id ${layer.id}) - it ` +
+          `contains "${info.name}" but the entry names "${legacy.filePath}".`
+      );
+      continue;
+    }
+    out.push({
+      id: layer.id,
+      name: layer.name,
+      aliases: [layer.name],
+      filePath: legacy.filePath,
+      sourcePath: legacy.sourcePath || legacy.filePath,
+      kind: legacy.kind || store.kindOf(legacy.filePath) || store.KIND_RAW,
+      lastSettings: legacy.lastSettings,
+      stateXml: legacy.stateXml,
+      aspect: legacy.aspect,
+      legacy: true,
+    });
+  }
+  return out;
 }
 
 // --- shared plumbing (applyCameraRaw + applyGeometry) --------------------------
@@ -498,19 +547,29 @@ async function verifiedPhotoLayers(doc) {
 // are interchangeable here - both are develop-editable and both resolve the same
 // way; only how hard they can be pushed differs, and that is the model's problem.
 async function resolveRawTarget(doc, targetLayer) {
-  const photoLayers = await verifiedPhotoLayers(doc);
+  const photoLayers = await photoLayersIn(doc);
   if (photoLayers.length === 0) {
     throw new Error(
       'No CreaCon-opened photo layer in this document. Use the panel\'s photo button first ' +
         "(smart objects opened outside CreaCon can't be develop-edited - their file path is unknown)."
     );
   }
+  // Match against EVERY name this photo goes by, not just the first. Duplicating
+  // a linked smart object gives two layers on one file, and the document's layer
+  // list (which the model also sees) shows both names - so the plan can legitimately
+  // target either one.
+  const names = (entry) => entry.aliases || [entry.name];
+  const describe = (entry) =>
+    names(entry).length > 1
+      ? `"${entry.name}" (also duplicated as ${names(entry).slice(1).map((n) => `"${n}"`).join(", ")})`
+      : `"${entry.name}"`;
+
   if (targetLayer) {
-    const found = photoLayers.find((l) => l.name === targetLayer);
+    const found = photoLayers.find((l) => names(l).includes(targetLayer));
     if (!found) {
       throw new Error(
         `"${targetLayer}" is not a develop-editable photo layer. Available: ` +
-          photoLayers.map((l) => `"${l.name}"`).join(", ")
+          photoLayers.map(describe).join(", ")
       );
     }
     return found;
@@ -518,7 +577,7 @@ async function resolveRawTarget(doc, targetLayer) {
   if (photoLayers.length === 1) return photoLayers[0];
   throw new Error(
     "Multiple photo layers exist - the plan must set targetLayer to one of: " +
-      photoLayers.map((l) => `"${l.name}"`).join(", ")
+      photoLayers.map(describe).join(", ")
   );
 }
 
@@ -636,12 +695,7 @@ async function applyCameraRaw(params, opts = {}) {
   // by id - not "undo the last thing", which stops meaning anything once another
   // edit has happened. Checkpoints hold the settings XML only, a few KB, never
   // the image: cheap enough to keep ten deep per layer for both formats.
-  const checkpoint = await registry.saveCheckpoint(
-    doc,
-    target.id,
-    currentXml,
-    "develop settings"
-  );
+  const checkpoint = registry.saveCheckpoint(target.filePath, currentXml, "develop settings");
   await writeState(target.filePath, xmlOut);
   log(`Develop state written to ${store.describeLocation(target.filePath)}`, params.settings);
 
@@ -654,10 +708,10 @@ async function applyCameraRaw(params, opts = {}) {
   // Fallback copy of the applied state, in PREVIEW space (what the model was
   // shown and sent). The state on disk is the real source of truth and is
   // re-parsed every turn; this only matters if that file goes missing.
-  await registry.updateSettings(doc, target.id, params.settings);
+  await registry.updateSettings(target.filePath, params.settings);
   // The mirror is what makes a missing working copy rebuildable, so it has to
   // track every write - see ensureFileAvailable.
-  await registry.updateStateMirror(doc, target.id, xmlOut);
+  await registry.updateStateMirror(target.filePath, xmlOut);
   return { checkpoint, layer: target.name };
 }
 
@@ -666,7 +720,8 @@ module.exports = {
   openRawAsSmartObject,
   listRawLayers,
   resolveRawTarget,
-  verifiedPhotoLayers,
+  photoLayersIn,
+  layerFileInfo,
   reloadRaw,
   ensureFileAvailable,
   maskSpace,

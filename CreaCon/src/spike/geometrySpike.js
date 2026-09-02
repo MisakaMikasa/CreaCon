@@ -262,8 +262,8 @@ async function runGeometrySpike(report) {
       if (!placed) throw new Error("Place succeeded but no active layer found");
       placedLayer = placed;
       baseline = boundsOf(placed);
-      await registry.register(app.activeDocument, placed.id, rawPath);
-      await registry.updateSettings(app.activeDocument, placed.id, {});
+      await registry.registerPhoto(rawPath);
+      await registry.updateSettings(rawPath, {});
     },
     { commandName: "CreaCon geometry spike: place raw" }
   );

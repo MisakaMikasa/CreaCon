@@ -96,7 +96,7 @@ async function phase1(say) {
       const placed = app.activeDocument.activeLayers[0];
       if (!placed) throw new Error("Place succeeded but no active layer found");
       layerId = placed.id;
-      await registry.register(app.activeDocument, layerId, rawPath);
+      await registry.registerPhoto(rawPath);
     },
     { commandName: "CreaCon spike: place linked raw" }
   );
@@ -170,7 +170,7 @@ async function phase2(say) {
     },
     { commandName: "CreaCon spike: linked round-trip" }
   );
-  await registry.updateSettings(app.activeDocument, layerId, merged);
+  await registry.updateSettings(rawPath, merged);
 
   say(
     "Linked spike: round-trip applied. LOOK AT THE CANVAS: does the image show YOUR manual " +

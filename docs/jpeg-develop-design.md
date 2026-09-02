@@ -276,34 +276,68 @@ the only supported way to read the registry.
 **A linked layer reports its full path** — `smartObject.link._path` on the full
 layer descriptor, confirmed 2026-08-26 by the layer/file report. (Not
 `smartObjectMore.link`, which genuinely is empty; the two are unrelated fields
-and the older note in `cameraRaw.js` was about the latter.) So verification
-compares real paths, folded through `photoCache.canonical` for case, separators
-and the `file:///` form. Embedded smart objects expose no path and fall back to
-the filename check.
+and the older note in `cameraRaw.js` was about the latter.)
 
-**What this leaves open:**
+**That removed the problem rather than catching it — see §3.6.** Verification by
+comparison was an interim step and no longer exists: the registry is keyed by the
+path, and the path comes from the layer, so there is no claim left to be stale.
 
-1. **Dead entries still accumulate.** `rawLayersIn` only returns entries it can
-   match to a live layer, so entries for deleted layers are invisible and stay in
-   `rawRegistry.json` forever. That accumulation is what supplies the stale entry
-   a reused id later collides with — path verification now catches the collision,
-   but the litter is still there. Pruning on each walk is tempting and wrong as
-   stated: Photoshop's undo restores a deleted layer *with its original id*, so
-   pruning on first absence would silently un-register a layer the user is about
-   to bring back. It needs mark-and-sweep with a grace period.
-2. **The registry can now be demoted properly.** With the path readable from the
-   layer, Photoshop is the authority on *which file* and the registry only holds
-   what Photoshop does not know: `kind`, `sourcePath`, `stateXml`, `lastSettings`,
-   `aspect`. That also fixes Save As — a renamed document can re-derive its
-   mappings from its own layers instead of orphaning them (§3.6) — and gives
-   orphan detection a live answer without parsing a PSD (§3.4).
+### 3.6 The registry is keyed by file path
 
-### 3.6 Registry demoted
+Because a linked layer reports its own path (§3.5a), Photoshop is the authority
+on *which file* a layer holds and the registry only has to store what Photoshop
+does not know: `sourcePath` (which original a working copy came from), `kind`,
+`lastSettings`, `stateXml`, `aspect`.
 
-With the PSD link table readable, `rawRegistry.json` stops being the source of
-truth and becomes a cache. The document's own file is authoritative. This fixes
-an existing bug: today `Save As` orphans a RAW layer's registry entry and it
-silently stops being develop-editable.
+```
+photos[canonical(filePath)] = { filePath, sourcePath, kind, lastSettings, stateXml, aspect, lastSeenAt }
+legacy[docKey][layerId]     = { ... }   // read-only, embedded smart objects only
+```
+
+Four problems stop existing rather than being handled:
+
+- **Layer-id reuse** is structurally impossible — no layer id is stored.
+- **Save As** is irrelevant — no document key is stored. This was a real bug: a
+  renamed document silently lost every mapping and its photos stopped being
+  develop-editable with no explanation.
+- **Unsaved documents** need no special case. The old `unsaved:<doc.id>` bucket
+  and its blind-merge-on-save are gone; `doc.id` restarts each launch, so that
+  merge could silently overwrite a persisted entry with a session one.
+- **Two documents using one photo** correctly share one develop state, since one
+  file has one develop state.
+
+`canonical()` lives in `pathKey.js` — dependency-free, because it decides whether
+two spellings are the same photo. Failing to converge silently un-registers a
+photo; converging wrongly writes settings into the wrong one. Covered by
+`scripts/test-registry.js` along with the v1→v2 migration, which is the only part
+that runs against a registry a user already has.
+
+**Duplicates merge field-wise.** Two v1 entries for one file may each hold
+different halves (one the settings, one the state mirror), so migration unions
+them; last-writer-wins silently dropped whatever the loser held.
+
+**What remains keyed by layer id:** embedded smart objects placed by older
+versions, which report no path. They keep the old key and its id-reuse risk,
+which cannot be fixed for them — the information needed is exactly what embedding
+discards.
+
+**Still open:** working copies are never swept, so the cache grows until cleared
+by hand. `lastSeenAt` exists and is stamped, ready for that. Pruning naively is
+wrong — Photoshop's undo restores a deleted layer *with its original id*, and a
+document that is simply not open right now is not abandoned — so it needs a grace
+period and explicit confirmation.
+
+### 3.7 The PSD link table, and why it is no longer needed
+
+§2.6 established that a PSD lists its linked files' full paths on disk, and that
+was going to be the mechanism for both liveness and Save As recovery. The live
+API turned out to expose the same thing per layer (§3.5a), which is simpler,
+cheaper than parsing a 400 MB file, and works on unsaved documents.
+
+The file-parsing route is therefore **not built**, and is only worth revisiting
+for a use case nothing needs yet: answering "which files does this document use?"
+about a document that is *not open*. The Python proofs are in the session
+scratchpad and the format is documented in §2.6 if that day comes.
 
 ## 4. What is *not* removed
 
