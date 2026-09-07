@@ -24,6 +24,7 @@
 const { localFileSystem } = require("uxp").storage;
 const { log, formatError } = require("../log");
 const store = require("./developStore");
+const pathKey = require("./pathKey");
 
 const CACHE_FOLDER = "photos";
 
@@ -50,21 +51,10 @@ async function cacheRoot() {
   return cacheRootPromise;
 }
 
-// One canonical form for comparing paths. Windows is case-insensitive and
-// Photoshop hands back a mixture of separators and file:/// URLs for the same
-// file, so every comparison in this codebase goes through here.
-function canonical(nativePath) {
-  if (!nativePath) return "";
-  let path = String(nativePath);
-  if (path.startsWith("file:///")) path = path.slice("file:///".length);
-  else if (path.startsWith("file://")) path = path.slice("file://".length);
-  try {
-    path = decodeURI(path);
-  } catch {
-    // Not percent-encoded, or malformed - the raw string is the better guess.
-  }
-  return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-}
+// Path identity lives in pathKey.js - ONE implementation, because two copies of
+// "are these the same photo?" that drift apart is how settings end up written to
+// the wrong file. Re-exported here only so existing callers keep working.
+const canonical = pathKey.canonical;
 
 // Is this file one of ours? Containment, never name matching - a user's own
 // photo may share a filename with a working copy, and must not be swept.

@@ -311,6 +311,56 @@ function render() {
   container.scrollTop = container.scrollHeight;
 }
 
+// Duplicating a photo layer in Photoshop does NOT duplicate the photo - both
+// layers point at the same file, and a file has exactly one develop state. So
+// the two layers are locked together forever: any edit changes both, and there
+// is no way to grade them differently.
+//
+// That is genuinely surprising, and silent, so say it once. Warned per set of
+// duplicates rather than per turn, so it does not become noise the user learns
+// to scroll past.
+const warnedDuplicates = new Set();
+
+async function warnAboutDuplicateLayers() {
+  try {
+    const { app } = require("photoshop");
+    const { photoLayersIn } = require("./executor/cameraRaw");
+    const doc = app.activeDocument;
+    if (!doc) return;
+
+    for (const photo of await photoLayersIn(doc)) {
+      const names = photo.aliases || [photo.name];
+      if (names.length < 2) continue;
+
+      const key = `${photo.filePath}::${names.slice().sort().join("|")}`;
+      if (warnedDuplicates.has(key)) continue;
+      warnedDuplicates.add(key);
+
+      const listed = names.map((n) => `"${n}"`).join(" and ");
+      // The remedy differs by format. A JPEG is copied on import, so importing
+      // the same photo again really does give an independent second version.
+      // A raw is edited in place, so the user has to make the copy themselves.
+      const remedy =
+        photo.kind === "jpeg"
+          ? "To grade this photo two different ways, use 📷 to import it a second time - " +
+            "CreaCon copies each import, so the two versions stay independent."
+          : "To grade this photo two different ways, duplicate the raw file on disk and " +
+            "import the copy with 📷 - a raw file holds a single set of develop settings.";
+
+      conversation.push({
+        role: "system",
+        text:
+          `Heads up: layers ${listed} are the same photo. Duplicating a layer doesn't ` +
+          "duplicate the photo - both point at one file, and a file has one set of develop " +
+          `settings, so any edit changes both. ${remedy}`,
+      });
+    }
+  } catch (err) {
+    // A warning is a nicety; never let it stop the message being sent.
+    log("Duplicate-layer check skipped:", formatError(err));
+  }
+}
+
 async function onSend() {
   const input = el("chatInput");
   const text = (input.value || "").trim();
@@ -318,6 +368,12 @@ async function onSend() {
 
   input.value = "";
   conversation.push({ role: "user", text });
+  // Before the thinking bubble, not after: the warning explains why the edit
+  // about to be planned will land on two layers at once, and pushing it later
+  // would render it underneath "Thinking…". It also reaches the model as a
+  // [note], which is the point - it should plan for one photo, not two.
+  await warnAboutDuplicateLayers();
+
   const thinkingMsg = { role: "assistant", text: "", thinking: true };
   conversation.push(thinkingMsg);
   busy = true;
@@ -485,6 +541,97 @@ async function askImportChoice(fileName) {
   return result === "keep" || result === "fresh" ? result : "cancel";
 }
 
+// Confirmation for the cache cleanup. Deleting files is never automatic, so this
+// says plainly what goes, what stays, and why it is safe before asking.
+async function askCleanupChoice(summaryText, removableCount) {
+  const dialog = document.createElement("dialog");
+
+  const wrap = document.createElement("div");
+  wrap.style.padding = "16px";
+  wrap.style.maxWidth = "420px";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Clean up cached photos";
+  const body = document.createElement("p");
+  body.textContent = summaryText;
+  const tip = document.createElement("p");
+  tip.style.opacity = "0.7";
+  tip.textContent =
+    "CreaCon keeps a working copy of every JPEG you import, so your originals are never " +
+    "modified. Your original photos are never touched by this.";
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.gap = "8px";
+  footer.style.justifyContent = "flex-end";
+  const mkButton = (label, variant, value) => {
+    const btn = document.createElement("sp-button");
+    btn.setAttribute("variant", variant);
+    btn.textContent = label;
+    btn.addEventListener("click", () => dialog.close(value));
+    return btn;
+  };
+  footer.appendChild(mkButton("Cancel", "secondary", "cancel"));
+  if (removableCount > 0) {
+    footer.appendChild(mkButton(`Remove ${removableCount}`, "cta", "remove"));
+  }
+
+  wrap.appendChild(heading);
+  wrap.appendChild(body);
+  wrap.appendChild(tip);
+  wrap.appendChild(footer);
+  dialog.appendChild(wrap);
+  document.body.appendChild(dialog);
+
+  const result = await dialog.showModal();
+  dialog.remove();
+  return result === "remove" ? "remove" : "cancel";
+}
+
+// Surveys the photo cache and offers to remove working copies nothing has used
+// for a long time. Proposes only - see cacheSweep.js for why this can never be
+// automatic.
+async function onCleanCache() {
+  if (busy) return;
+  busy = true;
+  render();
+  try {
+    const cacheSweep = require("./executor/cacheSweep");
+    const result = await cacheSweep.survey();
+    const summary = cacheSweep.describe(result);
+
+    if (result.totalCount === 0 || result.removable.length === 0) {
+      // Still worth showing: "nothing to clean" is a useful answer, and the
+      // summary explains what is being kept and why.
+      conversation.push({ role: "system", text: summary });
+      return;
+    }
+
+    const choice = await askCleanupChoice(summary, result.removable.length);
+    if (choice !== "remove") {
+      conversation.push({ role: "system", text: `${summary} (Left alone.)` });
+      return;
+    }
+
+    const { removed, freedBytes, errors } = await cacheSweep.remove(
+      result.removable.map((f) => f.path)
+    );
+    let text = `Removed ${removed.length} cached ${
+      removed.length === 1 ? "copy" : "copies"
+    }, freeing ${cacheSweep.formatBytes(freedBytes)}.`;
+    if (errors.length) {
+      text += ` ${errors.length} couldn't be removed (${errors[0].error}).`;
+    }
+    conversation.push({ role: "system", text });
+  } catch (err) {
+    error("Cache cleanup failed:", err);
+    conversation.push({ role: "error", text: `Cache cleanup failed: ${formatError(err)}` });
+  } finally {
+    busy = false;
+    render();
+  }
+}
+
 // Places a user-picked photo (RAW or JPEG) as a smart object and registers it so
 // chat plans can develop it via applyCameraRaw (write state + re-import). This is
 // the REQUIRED entry point for develop editing: smart objects created outside
@@ -621,6 +768,7 @@ const ACTIONS = {
 function setup() {
   el("btnSend").addEventListener("click", onSend);
   el("btnOpenRaw").addEventListener("click", onOpenRaw);
+  el("btnCleanCache").addEventListener("click", onCleanCache);
   // One listener for every button inside the message list - see onMessagesClick.
   el("messages").addEventListener("click", onMessagesClick);
   el("chatInput").addEventListener("keydown", (e) => {

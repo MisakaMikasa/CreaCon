@@ -307,6 +307,13 @@ it has run, so nobody - you included - knows what the frame will look like.
 Existing crops and angles are PRESERVED. Asking for perspective correction on an \
 already-cropped photo keeps the crop.
 
+TO UNDO A CROP ("restore the original aspect ratio", "uncrop this", "give me \r
+the full frame back") send an explicit FULL-FRAME rectangle: \r
+"crop": {{ "left": 0, "top": 0, "right": 1, "bottom": 1 }}. \r
+OMITTING "crop" does NOT undo anything - it keeps whatever crop is already there. \r
+This is the ONLY exception to the rule below about never recropping an \r
+already-cropped photo: the user asked for their original framing back.
+
 STRAIGHTENING ("rotate", degrees, negative = counter-clockwise). This is \
 EXPENSIVE - the frame has to shrink to stay rectangular:
   1 deg costs 5% of the picture | 3 deg costs 14% | 5 deg costs 21% | 10 deg 35%
@@ -699,8 +706,20 @@ def layer_context_block(context) -> str:
         else:
             label = "RAW smart object"
             latitude = " Full raw latitude."
+        # Duplicated layers share ONE file and therefore one develop state.
+        # Without this the model treats them as separate photos, plans a
+        # different look for each, and only the last one survives.
+        aliases = raw.get("aliases") or []
+        also = ""
+        if aliases:
+            names = ", ".join(f'"{n}"' for n in aliases)
+            also = (
+                f" This same photo also appears as the duplicated layer(s) {names} - "
+                "they share one file and one develop state, so edit it ONCE; "
+                "a second look for the same photo would just overwrite the first."
+            )
         lines.append(
-            f'{label} "{raw.get("layer")}" (develop-editable via applyCameraRaw).{latitude} '
+            f'{label} "{raw.get("layer")}" (develop-editable via applyCameraRaw).{latitude}{also} '
             f"Current develop settings: {state}"
         )
     return "\n".join(lines)
