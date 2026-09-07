@@ -4,6 +4,9 @@ const { validateEditPlan } = require("./validator");
 const { applyEditPlan } = require("./executor/index");
 const { openRawAsSmartObject } = require("./executor/cameraRaw");
 const { log, error, formatError } = require("./log");
+// Opens the link to the desktop app. Additive - the Apply button below still
+// applies plans directly, and nothing here changes that.
+require("./bridge").start();
 
 // Each entry: { role: "user"|"assistant"|"system"|"error", text, plan?, planStatus?, thinking? }
 // role drives bubble styling; plan (if present) renders an Apply/Cancel card.

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 from geometry_render import crop_thumbnails, rotation_preview
 from image_annotate import add_coordinate_grid
 import config
+from bridge import bridge
 from llm_client import chat, request_edit_plan
 from mask_render import corrections_from_plan, render_verify_image
 from paths import resource, userdata
@@ -108,7 +110,12 @@ def ping():
     port we ended up on and what token to send. Safe because the socket is
     bound to loopback and no browser origin can read the response.
     """
-    return {"app": "creacon", "version": VERSION, "token": TOKEN}
+    return {
+        "app": "creacon",
+        "version": VERSION,
+        "token": TOKEN,
+        "plugin_connected": bridge.connected(),
+    }
 
 
 class EditPlanRequest(BaseModel):
@@ -372,6 +379,37 @@ def choose_port():
         f"No free port among {order}. Close whatever is using them, or set "
         f'"port" in {config.CONFIG_FILE}.'
     )
+
+
+class ApplyRequest(BaseModel):
+    plan: dict
+
+
+@app.websocket("/bridge")
+async def bridge_socket(ws: WebSocket):
+    """The plugin's connection. It dials us, because a UXP plugin cannot be
+    dialled - Adobe gives it no way to listen for an incoming connection."""
+    await bridge.serve(ws, TOKEN)
+
+
+@app.post("/apply", dependencies=[Depends(require_token)])
+async def apply_plan(req: ApplyRequest):
+    """Hand a plan to Photoshop and wait for the verdict.
+
+    503 rather than 500 when nothing is attached: "Photoshop is not running"
+    is an ordinary state the UI has to render, not a server fault.
+    """
+    if not bridge.connected():
+        raise HTTPException(503, "Photoshop plugin is not connected")
+    try:
+        result = await bridge.apply(req.plan)
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "the plugin did not answer in time")
+    except ConnectionError as exc:
+        raise HTTPException(503, str(exc))
+    if result.get("type") == "error":
+        raise HTTPException(422, result.get("message", "apply failed"))
+    return result
 
 
 # The desktop window loads this page. Served over http from the same origin
