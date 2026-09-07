@@ -1,24 +1,29 @@
 import base64
 import json
 import logging
+import secrets
 import os
 import time
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from jsonschema import ValidationError
 from pydantic import BaseModel
 
 from geometry_render import crop_thumbnails, rotation_preview
 from image_annotate import add_coordinate_grid
+import config
 from llm_client import chat, request_edit_plan
 from mask_render import corrections_from_plan, render_verify_image
+from paths import userdata
 from plan_extract import extract_plan
 from validator import validate_edit_plan
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("creacon")
+
+VERSION = "0.5.0"
 
 # Feature toggles (env). GRID_OVERLAY draws the coordinate ruler on previews
 # (default on; set 0 to A/B against the un-gridded baseline). VERIFY_MASKS runs
@@ -29,7 +34,7 @@ VERIFY_MASKS = os.environ.get("VERIFY_MASKS", "0") == "1"
 # Write the rendered mask overlays to disk so they can be eyeballed (the two-panel
 # image = masks over the photo + the same masks on black). Default on for dev.
 SAVE_OVERLAYS = os.environ.get("SAVE_OVERLAYS", "1") != "0"
-OVERLAY_DIR = os.environ.get("OVERLAY_DIR", os.path.join(os.path.dirname(__file__), "debug_overlays"))
+OVERLAY_DIR = os.environ.get("OVERLAY_DIR") or str(userdata("debug_overlays"))
 
 
 def _prepare_preview(image_base64):
@@ -64,13 +69,44 @@ def _save_overlay(gridded_image, corrections, tag):
 
 app = FastAPI(title="CreaCon AI Backend")
 
-# Permissive CORS for local UXP development. Tighten this before shipping.
+# This server can drive Photoshop, so reaching it must be harder than knowing
+# the port. Three layers, none sufficient alone:
+#
+#   1. It binds 127.0.0.1 (see __main__), so nothing off this machine can
+#      connect at all.
+#   2. No browser origin is allowed. A page the user is visiting cannot read a
+#      response, and because every real endpoint needs a JSON content type and
+#      a custom header, its request is preflighted - and the preflight fails.
+#   3. Mutating endpoints require the shared token from config.json. The UXP
+#      plugin is not a browser origin and reads it from /ping.
+#
+# Removing any one of these puts "any website you visit can edit your photos"
+# back on the table, which is what allow_origins=["*"] meant here before.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[],
     allow_methods=["POST"],
-    allow_headers=["*"],
+    allow_headers=["X-CreaCon-Token", "Content-Type"],
 )
+
+TOKEN = config.ensure_token()
+
+
+def require_token(x_creacon_token: str = Header(default="")) -> None:
+    """Rejects anything that cannot present the token from config.json."""
+    if not secrets.compare_digest(x_creacon_token, TOKEN):
+        raise HTTPException(401, "missing or invalid X-CreaCon-Token")
+
+
+@app.get("/ping")
+def ping():
+    """Identifies this port as CreaCon and hands the plugin its token.
+
+    Deliberately unauthenticated: it is how the plugin discovers both which
+    port we ended up on and what token to send. Safe because the socket is
+    bound to loopback and no browser origin can read the response.
+    """
+    return {"app": "creacon", "version": VERSION, "token": TOKEN}
 
 
 class EditPlanRequest(BaseModel):
@@ -81,7 +117,7 @@ class EditPlanRequest(BaseModel):
     camera_raw: Optional[dict] = None  # {"raws": [{"layer": name, "settings": {...}|None}]}
 
 
-@app.post("/edit-plan")
+@app.post("/edit-plan", dependencies=[Depends(require_token)])
 def edit_plan(req: EditPlanRequest):
     if not req.instruction.strip():
         raise HTTPException(400, "instruction must not be empty")
@@ -212,7 +248,7 @@ class ChatRequest(BaseModel):
     camera_raw: Optional[dict] = None  # {"raws": [{"layer": name, "settings": {...}|None}]}
 
 
-@app.post("/chat")
+@app.post("/chat", dependencies=[Depends(require_token)])
 def chat_endpoint(req: ChatRequest):
     if not req.messages:
         raise HTTPException(400, "messages must not be empty")
@@ -295,3 +331,53 @@ def _geometry_previews(plan, image_base64):
     except Exception as exc:  # a preview is a nicety; never fail the turn over it
         logger.warning("geometry preview failed: %s", exc)
     return None
+
+
+# Candidate ports, tried in order. 8000 stays first so an existing plugin
+# build keeps working untouched; the 87xx range is the fallback because 8000
+# is one of the most contended ports on a developer machine, and a user whose
+# machine already has something there would otherwise just see a dead app.
+#
+# Every candidate is also declared in the plugin manifest's network domains -
+# UXP refuses to fetch a host:port that is not listed, so this list and that
+# one must stay in step.
+PORT_CANDIDATES = [8000, 8731, 8732, 8733, 8734, 8735]
+
+
+def choose_port():
+    """The configured port if it is free, else the first candidate that is.
+
+    Returns the port and records it in config.json so the desktop app and any
+    tooling can find the running server without probing.
+    """
+    import socket
+
+    configured = config.get("port")
+    order = ([int(configured)] if configured else []) + PORT_CANDIDATES
+
+    for port in order:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(("127.0.0.1", port))
+            except OSError:
+                logger.info("port %d busy, trying the next", port)
+                continue
+        config.save(port=port)
+        return port
+
+    raise SystemExit(
+        f"No free port among {order}. Close whatever is using them, or set "
+        f'"port" in {config.CONFIG_FILE}.'
+    )
+
+
+if __name__ == "__main__":
+    # A frozen build has no command line, so `uvicorn main:app` is not
+    # available to start it. This is the entry point that replaces it; running
+    # the module directly and running the .exe now take the same path.
+    import uvicorn
+
+    port = choose_port()
+    logger.info("CreaCon %s listening on http://127.0.0.1:%d", VERSION, port)
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

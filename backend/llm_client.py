@@ -1,13 +1,13 @@
 import os
 from typing import Optional
 
-from dotenv import load_dotenv
+import config
 
-# Must run before anything reads ANTHROPIC_API_KEY / GEMINI_API_KEY, and
-# before the provider modules (which read env vars at import time) load.
-load_dotenv()
+# Importing config is what loads settings: it resolves config.json ->
+# environment -> backend/.env, and calls load_dotenv() itself. It must come
+# before the provider modules, which read their key and model at import time.
 
-PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+PROVIDER = str(config.get("llm_provider", "anthropic")).lower()
 
 
 def request_edit_plan(instruction: str, image_base64: Optional[str] = None, context: Optional[dict] = None) -> dict:

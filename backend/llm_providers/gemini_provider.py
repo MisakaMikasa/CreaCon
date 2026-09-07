@@ -3,6 +3,7 @@ import json
 import os
 from typing import List, Optional
 
+import config
 from google import genai
 from google.genai import types
 
@@ -13,11 +14,11 @@ from prompt import (
     build_user_message,
 )
 
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL = config.get("gemini_model", "gemini-2.5-flash")
 # A small positive budget keeps Gemini snappy for chat; 0 disables thinking.
 THINKING_BUDGET = int(os.environ.get("GEMINI_THINKING_BUDGET", "512"))
 
-_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+_client = genai.Client(api_key=config.get("gemini_api_key"))
 
 
 # Gemini's Developer API structured-output mode (response_schema) can't express

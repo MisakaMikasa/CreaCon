@@ -3,10 +3,12 @@ from typing import List, Optional
 
 import anthropic
 
+import config
+
 from prompt import CHAT_SYSTEM_PROMPT, SYSTEM_PROMPT, augment_user_text, build_user_message
 from schema_tool import EDIT_PLAN_TOOL
 
-MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
+MODEL = config.get("anthropic_model", "claude-opus-4-8")
 
 # Resolves credentials from ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / an
 # `ant auth login` profile - never hardcode a key here.

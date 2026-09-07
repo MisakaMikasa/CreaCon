@@ -10,7 +10,14 @@
   "manifestVersion": 5,
   "requiredPermissions": {
     "network": {
-      "domains": ["http://localhost:8000"]
+      "domains": [
+        "http://localhost:8000",
+        "http://localhost:8731",
+        "http://localhost:8732",
+        "http://localhost:8733",
+        "http://localhost:8734",
+        "http://localhost:8735"
+      ]
     },
     "localFileSystem": "fullAccess"
   },

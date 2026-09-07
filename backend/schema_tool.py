@@ -1,9 +1,11 @@
 import json
 from pathlib import Path
 
+from paths import resource
+
 from anthropic.types import ToolParam
 
-SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema" / "editPlan.schema.json"
+SCHEMA_PATH = resource("schema", "editPlan.schema.json")
 _schema = json.loads(SCHEMA_PATH.read_text())
 
 # Reuse the same schema as the tool's input_schema so the LLM, the backend

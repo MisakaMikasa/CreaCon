@@ -23,6 +23,8 @@ import logging
 import os
 import re
 
+import config
+
 logger = logging.getLogger("creacon.segment")
 
 _SEG_PROMPT = (
@@ -67,12 +69,12 @@ def _client():
     if _CLIENT is None:
         from google import genai
 
-        _CLIENT = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+        _CLIENT = genai.Client(api_key=config.get("gemini_api_key"))
     return _CLIENT
 
 
 def _model():
-    return os.environ.get("SEGMENT_MODEL") or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    return os.environ.get("SEGMENT_MODEL") or config.get("gemini_model", "gemini-2.5-flash")
 
 
 def _downscaled_jpeg(image_bytes, max_edge=None):

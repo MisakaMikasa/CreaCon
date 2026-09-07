@@ -1,4 +1,39 @@
-const CHAT_URL = "http://localhost:8000/chat";
+// The backend picks the first free port from this list, so the plugin has to
+// find it rather than assume one. /ping identifies a port as CreaCon's and
+// hands back the access token; anything else answering there is not us.
+//
+// This list must match PORT_CANDIDATES in backend/main.py AND the network
+// domains in manifest.json - UXP refuses to fetch a host:port it was not
+// declared with, so an undeclared port fails before it is ever tried.
+const PORT_CANDIDATES = [8000, 8731, 8732, 8733, 8734, 8735];
+
+// Resolved once per session and reused; a backend restart on a different port
+// is picked up by clearing this on the next failure.
+let backend = null;
+
+async function findBackend(force) {
+  if (backend && !force) return backend;
+  for (const port of PORT_CANDIDATES) {
+    const base = `http://localhost:${port}`;
+    try {
+      const res = await fetch(`${base}/ping`, { method: "GET" });
+      if (!res.ok) continue;
+      const info = await res.json();
+      if (info && info.app === "creacon") {
+        backend = { base, token: info.token || "" };
+        log(`Backend found on ${base} (v${info.version})`);
+        return backend;
+      }
+      log(`Port ${port} answered but is not CreaCon - skipping.`);
+    } catch (err) {
+      // Nothing listening, or it is not speaking HTTP. Both mean "not here".
+    }
+  }
+  throw new Error(
+    `CreaCon backend not found on ports ${PORT_CANDIDATES.join(", ")}. ` +
+      "Start it with: python main.py (from the backend folder)."
+  );
+}
 const { log } = require("./log");
 
 // Exports a small JPEG preview of the current document so the backend can
@@ -90,9 +125,13 @@ async function sendChat(messages) {
 
   let response;
   try {
-    response = await fetch(CHAT_URL, {
+    const be = await findBackend();
+    response = await fetch(`${be.base}/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-CreaCon-Token": be.token,
+      },
       body: JSON.stringify({
         messages,
         image_base64: imageBase64,
@@ -108,10 +147,13 @@ async function sendChat(messages) {
 
   if (!response.ok) {
     const detail = await response.text();
+    // A stale token (config.json regenerated between sessions) reads as 401.
+    // Drop the cached backend so the next turn re-probes and picks it up.
+    if (response.status === 401) backend = null;
     throw new Error(`Backend returned ${response.status}: ${detail}`);
   }
 
   return response.json();
 }
 
-module.exports = { sendChat, capturePreviewImage };
+module.exports = { sendChat, capturePreviewImage, findBackend };
