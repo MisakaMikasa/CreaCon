@@ -5,6 +5,7 @@ pydantic
 python-dotenv
 Pillow
 numpy
+scipy
 
 # Pick the SDK(s) for the provider(s) you'll actually use (LLM_PROVIDER in .env)
 anthropic
