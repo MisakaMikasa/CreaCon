@@ -19,7 +19,19 @@ schema.definitions.step.allOf.forEach((clause) => {
 
 // Fields that each make an applyGeometry step do something. A step with none of
 // them still costs a Camera Raw dialog and changes nothing.
-const GEOMETRY_ACTIONS = ["rotate", "upright", "crop", "lensProfile"];
+//
+// DERIVED from the schema's anyOf rather than hand-listed. This rule used to live
+// only here, and that drift had teeth: the backend happily approved an actionless
+// applyGeometry step, the model was never told the rule, so the backend's
+// self-correcting retry never fired - the plan reached the panel, rendered an
+// Apply button, and could only ever fail. Keeping both readers on one definition
+// means the backend rejects it first and the model gets told why.
+const GEOMETRY_ACTIONS = (() => {
+  const clause = schema.definitions.step.allOf.find(
+    (c) => c.if.properties.op.const === "applyGeometry"
+  );
+  return (clause.then.properties.params.anyOf || []).map((c) => c.required[0]);
+})();
 
 function validateEditPlan(plan) {
   const errors = [];

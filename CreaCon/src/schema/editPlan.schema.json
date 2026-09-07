@@ -252,7 +252,13 @@
               "params": {
                 "type": "object",
                 "additionalProperties": false,
-                "description": "Crop, straighten and perspective on a RAW layer. MUST be the only step touching that layer - geometry moves the frame every mask is measured against, and a perspective correction is not computed until it has been applied, so masks belong in a LATER turn against the corrected preview.",
+                "anyOf": [
+                  { "required": ["rotate"] },
+                  { "required": ["upright"] },
+                  { "required": ["crop"] },
+                  { "required": ["lensProfile"] }
+                ],
+                "description": "Crop, straighten and perspective on a RAW layer. MUST set at least ONE of rotate, upright, crop or lensProfile - a step with none of them changes nothing and still costs the user a Camera Raw dialog. MUST be the only step touching that layer - geometry moves the frame every mask is measured against, and a perspective correction is not computed until it has been applied, so masks belong in a LATER turn against the corrected preview.",
                 "properties": {
                   "targetLayer": { "type": "string", "description": "RAW layer name; optional when only one exists." },
                   "rotate": {
