@@ -270,7 +270,7 @@
                   "crop": {
                     "type": "object",
                     "additionalProperties": false,
-                    "description": "Explicit crop rectangle, normalized 0..1, read off the preview grid. Omit to keep the full frame. ONLY set this when the user asked to recrop - never recompose someone's framing unprompted.",
+                    "description": "Explicit crop rectangle, normalized 0..1, read off the preview grid. Omit to leave any existing crop UNTOUCHED - omitting this does NOT restore the full frame. To REMOVE a crop and give back the original uncropped frame, send a full-frame rectangle: left 0, top 0, right 1, bottom 1. ONLY set this when the user asked to recrop - never recompose someone's framing unprompted.",
                     "properties": {
                       "left": { "type": "number", "minimum": 0, "maximum": 1 },
                       "top": { "type": "number", "minimum": 0, "maximum": 1 },
