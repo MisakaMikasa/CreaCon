@@ -6,8 +6,10 @@ import os
 import time
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from jsonschema import ValidationError
 from pydantic import BaseModel
 
@@ -16,7 +18,7 @@ from image_annotate import add_coordinate_grid
 import config
 from llm_client import chat, request_edit_plan
 from mask_render import corrections_from_plan, render_verify_image
-from paths import userdata
+from paths import resource, userdata
 from plan_extract import extract_plan
 from validator import validate_edit_plan
 
@@ -370,6 +372,22 @@ def choose_port():
         f"No free port among {order}. Close whatever is using them, or set "
         f'"port" in {config.CONFIG_FILE}.'
     )
+
+
+# The desktop window loads this page. Served over http from the same origin
+# it will call, rather than opened as a file:// URL - a file:// page counts as
+# a different origin, so every fetch("/ping") from it would be blocked as
+# cross-origin. Declared last: FastAPI matches in order, and "/" would
+# otherwise sit in front of the real endpoints.
+WEB_DIR = resource("backend", "web")
+
+
+@app.get("/")
+def index():
+    return FileResponse(WEB_DIR / "index.html")
+
+
+app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 
 
 if __name__ == "__main__":
