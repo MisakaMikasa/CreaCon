@@ -402,6 +402,37 @@ class ApplyRequest(BaseModel):
     plan: dict
 
 
+class SettingsRequest(BaseModel):
+    gemini_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    llm_provider: Optional[str] = None
+
+
+@app.get("/settings", dependencies=[Depends(require_token)])
+def read_settings():
+    """What the settings screen shows. Keys are reported as present or absent,
+    never returned - there is no reason to hand a secret back out, and doing so
+    would put it in any log that captures a response body."""
+    return {
+        "llm_provider": config.get("llm_provider", "gemini"),
+        "has_gemini_key": bool(config.get("gemini_api_key")),
+        "has_anthropic_key": bool(config.get("anthropic_api_key")),
+    }
+
+
+@app.post("/settings", dependencies=[Depends(require_token)])
+def write_settings(req: SettingsRequest):
+    """Persist to config.json - the file an installed build reads instead of
+    backend/.env, which it has no way to reach."""
+    updates = {k: v for k, v in req.model_dump().items() if v}
+    if not updates:
+        raise HTTPException(400, "nothing to save")
+    config.save(**updates)
+    # The provider modules read their key and model at import time, so a change
+    # here does not reach a module that is already loaded.
+    return {"saved": sorted(updates), "restart_required": True}
+
+
 @app.websocket("/bridge")
 async def bridge_socket(ws: WebSocket):
     """The plugin's connection. It dials us, because a UXP plugin cannot be
@@ -435,6 +466,42 @@ async def apply_plan(req: ApplyRequest):
 # cross-origin. Declared last: FastAPI matches in order, and "/" would
 # otherwise sit in front of the real endpoints.
 WEB_DIR = resource("backend", "web")
+
+
+class RestoreRequest(BaseModel):
+    checkpoint: str
+    layer: Optional[str] = None
+
+
+@app.post("/restore", dependencies=[Depends(require_token)])
+async def restore_checkpoint(req: RestoreRequest):
+    if not bridge.connected():
+        raise HTTPException(503, "Photoshop plugin is not connected")
+    try:
+        result = await bridge.restore(req.checkpoint, req.layer)
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "the plugin did not answer in time")
+    except ConnectionError as exc:
+        raise HTTPException(503, str(exc))
+    if result.get("type") == "error":
+        raise HTTPException(422, result.get("message", "restore failed"))
+    return result
+
+
+@app.post("/open-raw", dependencies=[Depends(require_token)])
+async def open_raw():
+    """The 'Open RAW' import, driven from the desktop window."""
+    if not bridge.connected():
+        raise HTTPException(503, "Photoshop plugin is not connected")
+    try:
+        result = await bridge.open_raw()
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "the import was not completed in time")
+    except ConnectionError as exc:
+        raise HTTPException(503, str(exc))
+    if result.get("type") == "error":
+        raise HTTPException(422, result.get("message", "import failed"))
+    return result
 
 
 @app.get("/")

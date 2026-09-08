@@ -14,6 +14,9 @@
 const { capturePreviewImage, readLayerContext } = require("./aiClient");
 const { validateEditPlan } = require("./validator");
 const { applyEditPlan } = require("./executor/index");
+const { core } = require("photoshop");
+const { openRawAsSmartObject } = require("./executor/cameraRaw");
+const { askImportChoice } = require("./dialogs");
 const { log, error, formatError } = require("./log");
 
 // Must match PORT_CANDIDATES in backend/main.py and the network domains in
@@ -142,6 +145,60 @@ async function sendContext(msg) {
   );
 }
 
+// Puts a photo back to the state saved before one specific edit, by id. Not
+// "undo the last apply": each card holds its own checkpoint, so restoring an
+// older one still does what that card says even after later edits.
+//
+// Its own command rather than a synthetic plan, because it is not an edit -
+// there is no applyGeometry that means "go back".
+async function runRestore(msg) {
+  if (busy) {
+    send({ type: "error", id: msg.id, message: "an apply is already running" });
+    return;
+  }
+  busy = true;
+  try {
+    const { restoreCheckpoint } = require("./executor/geometry");
+    const name = await core.executeAsModal(
+      async () => restoreCheckpoint(msg.checkpoint, msg.layer),
+      { commandName: "CreaCon: restore checkpoint" }
+    );
+    send({ type: "done", id: msg.id, ok: true, layerName: name });
+    log(`bridge: restored "${name}"`);
+  } catch (err) {
+    error("bridge: restore failed", err);
+    send({ type: "error", id: msg.id, message: formatError(err) });
+  } finally {
+    busy = false;
+  }
+}
+
+// 📷 from the desktop window. The file picker and the keep-or-fresh dialog both
+// appear in Photoshop - the picker has to, and keeping the follow-up question
+// beside it means one dialog flow rather than a decision split across two
+// windows.
+//
+// Progress notes are collected rather than streamed: they are short, the whole
+// import is quick, and the window shows them together with the result.
+async function runOpenRaw(msg) {
+  if (busy) {
+    send({ type: "error", id: msg.id, message: "an apply is already running" });
+    return;
+  }
+  busy = true;
+  const notes = [];
+  try {
+    const layerName = await openRawAsSmartObject((text) => notes.push(text), askImportChoice);
+    send({ type: "done", id: msg.id, ok: true, layerName: layerName || null, notes });
+    log(`bridge: opened "${layerName}"`);
+  } catch (err) {
+    error("bridge: open raw failed", err);
+    send({ type: "error", id: msg.id, message: formatError(err), notes });
+  } finally {
+    busy = false;
+  }
+}
+
 async function connect() {
   if (stopped) return;
 
@@ -195,6 +252,10 @@ async function connect() {
       runApply(msg);
     } else if (msg.type === "context") {
       sendContext(msg);
+    } else if (msg.type === "restore") {
+      runRestore(msg);
+    } else if (msg.type === "open_raw") {
+      runOpenRaw(msg);
     }
   };
 

@@ -43,6 +43,10 @@ HELLO_TIMEOUT = 10.0
 # executeAsModal, so it waits behind anything already modal.
 CONTEXT_TIMEOUT = 30.0
 
+# 📷 waits on a file picker and then a keep-or-fresh dialog. Both sit until
+# a human answers, so this is a give-up threshold, not an expected duration.
+OPEN_RAW_TIMEOUT = 600.0
+
 
 class Bridge:
     """Holds the one live plugin connection. One Photoshop, one socket.
@@ -130,6 +134,15 @@ class Bridge:
         """
         reply = await self.request("context", {}, timeout)
         return reply.get("context") or {}
+
+    async def restore(self, checkpoint, layer, timeout: float = APPLY_TIMEOUT) -> dict:
+        """Put a photo back to a saved checkpoint. Not an edit, so not a plan."""
+        return await self.request("restore", {"checkpoint": checkpoint, "layer": layer}, timeout)
+
+    async def open_raw(self, timeout: float = OPEN_RAW_TIMEOUT) -> dict:
+        """Run the 📷 import. Long timeout: it waits on a file picker and a
+        keep-or-fresh dialog, both of which sit until a human answers."""
+        return await self.request("open_raw", {}, timeout)
 
     def resolve(self, msg: dict) -> None:
         """Fill the box a parked apply() is waiting on."""

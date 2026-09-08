@@ -410,23 +410,102 @@ async function onApply(idx) {
   }
 }
 
+// A crop or a wedge-trim is just an applyGeometry plan with one step, so both
+// go down the same /apply path an ordinary plan does. No new bridge command:
+// "crop to this rectangle" is an edit like any other.
+async function runGeometry(params, summary, sourceMsg) {
+  if (busy) return;
+  busy = true;
+  render();
+  try {
+    const res = await fetch("/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CreaCon-Token": token },
+      body: JSON.stringify({
+        plan: { summary, steps: [{ op: "applyGeometry", description: summary, params }] },
+      }),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const done = await res.json();
+    const report = done.geometryReport || null;
+
+    conversation.push({
+      role: "system",
+      text: report ? `${summary}: ${report.summary}.` : `${summary}.`,
+      report: report || undefined,
+    });
+    if (report) report.summary = `${summary} — ${report.summary}`;
+    if (sourceMsg) sourceMsg.proposalStatus = "picked";
+  } catch (err) {
+    conversation.push({ role: "error", text: `Error: ${err.message}` });
+  } finally {
+    busy = false;
+    render();
+  }
+}
+
+function onPickProposal(idx, optionIndex) {
+  const msg = conversation[idx];
+  if (!msg || !msg.previews || msg.proposalStatus) return;
+  const option = msg.previews.options[optionIndex];
+  if (!option) return;
+  runGeometry(
+    { targetLayer: option.targetLayer || undefined, crop: option.crop },
+    `Cropped: ${option.label}`,
+    msg
+  );
+}
+
+// Trims the transparent corners a strong perspective correction can leave. The
+// rectangle comes from the transform Camera Raw wrote back, so it is measured
+// rather than guessed.
+function onFixWedges(idx) {
+  const msg = conversation[idx];
+  if (!msg || !msg.report || !msg.report.correctiveCrop) return;
+  runGeometry({ crop: msg.report.correctiveCrop }, "Trimmed the empty corners", null);
+  msg.report = { ...msg.report, wedges: false };
+}
+
+// Restore is NOT an edit - there is no applyGeometry meaning "go back" - so it
+// has its own endpoint and its own bridge command.
+async function onRestoreCheckpoint(idx) {
+  const msg = conversation[idx];
+  if (busy || !msg || !msg.report || !msg.report.checkpoint) return;
+  busy = true;
+  render();
+  try {
+    const res = await fetch("/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CreaCon-Token": token },
+      body: JSON.stringify({ checkpoint: msg.report.checkpoint, layer: msg.report.layer }),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const done = await res.json();
+    conversation.push({
+      role: "system",
+      text: `Restored "${done.layerName}" to before that edit.`,
+    });
+    // The card's restore point is used up as a destination, but the state it
+    // replaced is now a checkpoint of its own, so nothing becomes a dead end.
+    msg.report = undefined;
+  } catch (err) {
+    conversation.push({ role: "error", text: `Couldn't restore: ${err.message}` });
+  } finally {
+    busy = false;
+    render();
+  }
+}
+
 const ACTIONS = {
   apply: onApply,
   cancel: (idx) => {
     conversation[idx].planStatus = "cancelled";
     render();
   },
-  pickProposal: (idx, i) => notYet("pickProposal", idx, i),
-  fixWedges: (idx) => notYet("fixWedges", idx),
-  restore: (idx) => notYet("restore", idx),
+  pickProposal: onPickProposal,
+  fixWedges: onFixWedges,
+  restore: onRestoreCheckpoint,
 };
-
-function notYet(name, ...args) {
-  // 2b-1 is the shell. Wired in the next steps; logging beats a dead button.
-  console.log(`[shell] ${name}`, args);
-  conversation.push({ role: "system", text: `(${name} is not wired up yet)` });
-  render();
-}
 
 // ------------------------------------------------------------------- status
 
@@ -454,11 +533,92 @@ async function refreshStatus() {
 
 // ----------------------------------------------------------------- settings
 
-function showSettings(show) {
+async function showSettings(show) {
   el("settings").hidden = !show;
   el("messages").hidden = show;
   el("inputRow").hidden = show;
-  if (show) el("apiKey").focus();
+  if (!show) return;
+
+  el("settingsMsg").textContent = "";
+  el("settingsMsg").className = "";
+  try {
+    const res = await fetch("/settings", { headers: { "X-CreaCon-Token": token } });
+    const s = await res.json();
+    el("provider").value = s.llm_provider || "gemini";
+    // The key itself is never sent back - there is no reason to hand a secret
+    // out again, and it would land in any log that captures a response body.
+    // The placeholder is how the user knows one is already stored.
+    el("apiKey").value = "";
+    el("apiKey").placeholder = s.has_gemini_key ? "•••••••• (saved)" : "AIza…";
+  } catch (err) {
+    say(el("settingsMsg"), `Couldn't load settings: ${err.message}`, "bad");
+  }
+  el("apiKey").focus();
+}
+
+function say(node, text, kind) {
+  node.textContent = text;
+  node.className = kind || "";
+}
+
+async function onSaveSettings() {
+  const body = { llm_provider: el("provider").value };
+  const key = el("apiKey").value.trim();
+  if (key) body.gemini_api_key = key;
+
+  try {
+    const res = await fetch("/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CreaCon-Token": token },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const done = await res.json();
+    el("apiKey").value = "";
+    // The provider modules read their key and model at IMPORT time, so a change
+    // does not reach a module that is already loaded. Saying so beats the user
+    // concluding the setting did not save.
+    say(
+      el("settingsMsg"),
+      done.restart_required
+        ? `Saved (${done.saved.join(", ")}). Restart CreaCon for it to take effect.`
+        : `Saved (${done.saved.join(", ")}).`,
+      "ok"
+    );
+  } catch (err) {
+    say(el("settingsMsg"), `Couldn't save: ${err.message}`, "bad");
+  }
+}
+
+// 📷 opens a photo for develop editing. The file picker and the keep-or-fresh
+// question both live in Photoshop: the picker has to, and putting the follow-up
+// question in the same place keeps one dialog flow rather than bouncing the
+// user between two windows for one decision.
+async function onOpenRaw() {
+  if (busy) return;
+  busy = true;
+  render();
+  try {
+    const res = await fetch("/open-raw", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CreaCon-Token": token },
+      body: "{}",
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const done = await res.json();
+    (done.notes || []).forEach((text) => conversation.push({ role: "system", text }));
+    if (done.layerName) {
+      conversation.push({
+        role: "system",
+        text: `Imported "${done.layerName}" — ask for develop edits on it now.`,
+      });
+    }
+  } catch (err) {
+    conversation.push({ role: "error", text: `Couldn't open the photo: ${err.message}` });
+  } finally {
+    busy = false;
+    render();
+  }
 }
 
 // -------------------------------------------------------------------- setup
@@ -468,7 +628,8 @@ function setup() {
   el("btnSettings").addEventListener("click", () => showSettings(true));
   el("btnCloseSettings").addEventListener("click", () => showSettings(false));
   el("btnSend").addEventListener("click", onSend);
-  el("btnOpenRaw").addEventListener("click", () => notYet("openRaw"));
+  el("btnOpenRaw").addEventListener("click", onOpenRaw);
+  el("btnSaveSettings").addEventListener("click", onSaveSettings);
 
   // Enter sends, Shift+Enter makes a newline - what every chat box does, and
   // impossible to get right against UXP's sp-textarea.
