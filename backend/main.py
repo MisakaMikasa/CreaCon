@@ -258,7 +258,24 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/chat", dependencies=[Depends(require_token)])
-def chat_endpoint(req: ChatRequest):
+async def chat_endpoint(req: ChatRequest):
+    # The plugin sends its own context; the desktop app cannot - exporting a
+    # canvas JPEG and listing layers both need the document. So when the caller
+    # supplied none, collect it from Photoshop over the bridge. That is what
+    # keeps this endpoint identical for both callers.
+    if req.image_base64 is None and not req.layer_names and bridge.connected():
+        try:
+            ctx = await bridge.context()
+            req.image_base64 = ctx.get("image_base64")
+            req.layer_names = ctx.get("layer_names") or []
+            req.selected_layers = ctx.get("selected_layers") or []
+            req.camera_raw = ctx.get("camera_raw")
+            logger.info("collected context from the plugin: %d layer(s), preview %s",
+                        len(req.layer_names), "yes" if req.image_base64 else "no")
+        except Exception as exc:
+            # A text-only turn is degraded but useful; a failed turn is not.
+            logger.warning("could not collect context from the plugin: %s", exc)
+
     if not req.messages:
         raise HTTPException(400, "messages must not be empty")
 

@@ -4,72 +4,58 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CreaCon</title>
-<style>
-  :root {
-    --ground: #1b1d1f; --panel: #242729; --line: #34383b;
-    --ink: #e8eaec; --muted: #9aa1a7; --ok: #6dbf8b; --bad: #d97b6c;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; min-height: 100vh; background: var(--ground); color: var(--ink);
-    font: 14px/1.6 "Segoe UI", system-ui, sans-serif;
-    display: flex; flex-direction: column; gap: 18px;
-    padding: 26px 22px;
-  }
-  h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: .2px; }
-  .sub { color: var(--muted); font-size: 12.5px; margin: 0; }
-  .card {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
-    padding: 16px; display: flex; flex-direction: column; gap: 10px;
-  }
-  .row { display: flex; justify-content: space-between; gap: 14px; align-items: baseline; }
-  .label { color: var(--muted); font-size: 12.5px; }
-  .val { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; }
-  .ok  { background: var(--ok); }  .bad { background: var(--bad); }
-  .status { display: flex; align-items: center; font-size: 13px; }
-  footer { margin-top: auto; color: var(--muted); font-size: 11.5px; }
-</style>
+<link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
-<div>
-  <h1>CreaCon</h1>
-  <p class="sub">Phase 1 spike &mdash; placeholder window</p>
+<div id="chat">
+
+  <!-- Not in the UXP panel, and the most important thing here. The app can be
+       perfectly healthy while Photoshop is closed or the plugin is detached,
+       and an Apply would then fail with a 503 the user has no way to predict.
+       A permanent indicator turns that into something visible beforehand. -->
+  <div id="status">
+    <span id="statusDot"></span>
+    <span id="statusText">connecting…</span>
+    <span class="spacer"></span>
+    <button id="btnSettings" title="Settings">⚙</button>
+  </div>
+
+  <div id="messages"></div>
+
+  <div id="settings" hidden>
+    <h2>Settings</h2>
+    <div>
+      <label for="apiKey">Gemini API key</label>
+      <input id="apiKey" type="password" placeholder="AIza…" autocomplete="off" spellcheck="false">
+      <div class="hint">
+        Stored in <code>config.json</code> in your AppData folder. It is sent only to
+        Google, and only when you ask for an edit.
+      </div>
+    </div>
+    <div>
+      <label for="provider">Model provider</label>
+      <select id="provider">
+        <option value="gemini">Google Gemini</option>
+        <option value="anthropic">Anthropic Claude</option>
+      </select>
+    </div>
+    <div id="settingsMsg"></div>
+    <div class="plan-actions">
+      <button id="btnSaveSettings" class="cta">Save</button>
+      <button id="btnCloseSettings">Back to chat</button>
+    </div>
+  </div>
+
+  <div id="inputRow">
+    <textarea id="chatInput" rows="2"
+      placeholder="Ask for edits, or describe the look you want…"></textarea>
+    <button id="btnSend" class="cta">Send</button>
+    <button id="btnOpenRaw" title="Open a RAW or JPEG photo for AI develop editing">📷</button>
+  </div>
+
 </div>
 
-<div class="card">
-  <!-- This page's job is NOT to look like anything. It is to prove the window
-       can reach the API it is served by. A static "hello" would only prove
-       pywebview can render a file, which was never the risky part. -->
-  <div class="status"><span id="dot" class="dot bad"></span><span id="state">checking backend&hellip;</span></div>
-  <div class="row"><span class="label">version</span><span class="val" id="version">&mdash;</span></div>
-  <div class="row"><span class="label">port</span><span class="val" id="port">&mdash;</span></div>
-  <div class="row"><span class="label">token</span><span class="val" id="token">&mdash;</span></div>
-</div>
-
-<footer>Served by FastAPI, rendered in WebView2, one process.</footer>
-
-<script>
-  // Same-origin: this page came from the very server it is calling, so there
-  // is no CORS question to answer. That is why it is served over http rather
-  // than loaded as a file:// URL.
-  async function check() {
-    try {
-      const res = await fetch("/ping");
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const info = await res.json();
-      document.getElementById("dot").className = "dot ok";
-      document.getElementById("state").textContent = "backend connected";
-      document.getElementById("version").textContent = info.version;
-      document.getElementById("port").textContent = location.port || "(default)";
-      document.getElementById("token").textContent = (info.token || "").slice(0, 12) + "…";
-    } catch (err) {
-      document.getElementById("state").textContent = "backend unreachable: " + err.message;
-    }
-  }
-  check();
-</script>
-
+<script src="/static/app.js"></script>
 </body>
 </html>

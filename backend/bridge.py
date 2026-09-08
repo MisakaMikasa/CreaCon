@@ -39,6 +39,10 @@ APPLY_TIMEOUT = 180.0
 # client sends it immediately on open.
 HELLO_TIMEOUT = 10.0
 
+# Exporting a canvas JPEG and reading the layer stack. Quick, but it enters
+# executeAsModal, so it waits behind anything already modal.
+CONTEXT_TIMEOUT = 30.0
+
 
 class Bridge:
     """Holds the one live plugin connection. One Photoshop, one socket.
@@ -87,8 +91,15 @@ class Bridge:
 
     # ---- request / response ---------------------------------------------
 
-    async def apply(self, plan: dict, timeout: float = APPLY_TIMEOUT) -> dict:
-        """Send a plan to the plugin and wait for its verdict."""
+    async def request(self, kind: str, payload: dict, timeout: float) -> dict:
+        """Ask the plugin something and wait for the matching reply.
+
+        Every call in and out of Photoshop goes through here. The reply lands
+        on the socket rather than on this request, so a Future is parked under
+        a ticket id and this coroutine suspends until the socket handler fills
+        it - see resolve(). The event loop keeps serving other requests, which
+        is why /ping stays live during a two-minute apply.
+        """
         if self._ws is None:
             raise ConnectionError("no plugin connected")
 
@@ -97,13 +108,28 @@ class Bridge:
         self._pending[request_id] = future
 
         try:
-            await self._ws.send_json({"type": "apply", "id": request_id, "plan": plan})
-            logger.info("sent plan %s (%d step(s))", request_id[:8], len(plan.get("steps") or []))
+            await self._ws.send_json({"type": kind, "id": request_id, **payload})
             return await asyncio.wait_for(future, timeout)
         finally:
             # Covers every exit - timeout, disconnect, success - so a dropped
             # request can never leak an entry into _pending.
             self._pending.pop(request_id, None)
+
+    async def apply(self, plan: dict, timeout: float = APPLY_TIMEOUT) -> dict:
+        """Send a plan to the plugin and wait for its verdict."""
+        logger.info("sending a plan (%d step(s))", len(plan.get("steps") or []))
+        return await self.request("apply", {"plan": plan}, timeout)
+
+    async def context(self, timeout: float = CONTEXT_TIMEOUT) -> dict:
+        """Canvas JPEG + layer names + raw develop state, read from Photoshop.
+
+        The desktop app cannot produce any of this - exporting a preview and
+        listing layers both need the document. So the backend collects it on
+        the app's behalf when the caller did not supply it, which is what makes
+        /chat identical for the app and for the existing plugin.
+        """
+        reply = await self.request("context", {}, timeout)
+        return reply.get("context") or {}
 
     def resolve(self, msg: dict) -> None:
         """Fill the box a parked apply() is waiting on."""
@@ -150,7 +176,7 @@ class Bridge:
                     # Logged for now. In step 2b these are forwarded to the
                     # desktop UI so the user sees steps land one at a time.
                     logger.info("  step %s: %s", msg.get("step"), msg.get("result"))
-                elif kind in ("done", "error"):
+                elif kind in ("done", "error", "context_result"):
                     self.resolve(msg)
                 else:
                     logger.debug("unknown frame from plugin: %r", kind)

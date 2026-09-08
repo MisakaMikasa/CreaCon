@@ -156,4 +156,4 @@ async function sendChat(messages) {
   return response.json();
 }
 
-module.exports = { sendChat, capturePreviewImage, findBackend };
+module.exports = { sendChat, capturePreviewImage, readLayerContext, findBackend };

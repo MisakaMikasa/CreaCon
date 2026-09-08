@@ -1,0 +1,328 @@
+/* Ported from CreaCon/style.css.
+ *
+ * Class names are kept identical so the rendering code moves across unchanged.
+ * What differs is only what UXP forced:
+ *   - sp-button / sp-textarea are Adobe's Spectrum components and do not exist
+ *     outside UXP, so those rules target <button> and <textarea> instead and
+ *     the appearance is written out here rather than inherited.
+ *   - a real WebView has :focus-visible, hover states and transitions worth
+ *     using, which UXP's partial DOM made unreliable.
+ */
+
+:root {
+  --ground: #1f2124;
+  --panel: #2b2b2b;
+  --line: #555;
+  --ink: #e8e8e8;
+  --muted: #9a9a9a;
+  --accent: #2f6fed;
+  --accent-hover: #4480f2;
+  --ok: #6dbf8b;
+  --bad: #d97b6c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* `hidden` hides an element by way of `display: none` in the browser's default
+   stylesheet - which any explicit `display` in this file overrides, because an
+   author rule beats a UA one. #settings and #inputRow both set display:flex,
+   so el.hidden = true set the attribute and changed nothing.
+   !important because the whole point is to win over whatever the element's own
+   display rule happens to be. */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  color: var(--ink);
+  background: var(--ground);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+}
+
+#chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 8px;
+}
+
+/* Status strip - new in the desktop version. The plugin can be detached while
+   the app is perfectly healthy, and that is the failure a user will actually
+   hit, so it gets permanent screen space rather than an error after the fact. */
+#status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px 9px;
+  font-size: 11.5px;
+  color: var(--muted);
+  border-bottom: 1px solid #34383b;
+  margin-bottom: 8px;
+}
+#statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+#statusDot.ok {
+  background: var(--ok);
+}
+#statusDot.bad {
+  background: var(--bad);
+}
+#status .spacer {
+  margin-left: auto;
+}
+#btnSettings {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+#btnSettings:hover {
+  color: var(--ink);
+  background: #34383b;
+}
+
+#messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.row {
+  display: flex;
+  margin-bottom: 8px;
+}
+.row-user {
+  justify-content: flex-end;
+}
+.row-assistant,
+.row-error {
+  justify-content: flex-start;
+}
+.row-system {
+  justify-content: center;
+}
+
+.bubble {
+  max-width: 85%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+.bubble-user {
+  background: var(--accent);
+  color: #ffffff;
+}
+.bubble-assistant,
+.bubble-thinking {
+  background: #3a3a3a;
+  color: var(--ink);
+}
+.bubble-thinking {
+  color: var(--muted);
+  font-style: italic;
+}
+.bubble-system {
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+}
+.bubble-error {
+  background: #5a2222;
+  color: #ffd7d7;
+}
+
+.plan-card {
+  max-width: 85%;
+  margin-bottom: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+}
+.plan-card ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 12px;
+}
+.plan-card li {
+  margin-bottom: 4px;
+}
+.plan-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Was sp-button. Written out because Spectrum is UXP-only. */
+button {
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 5px 13px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #3a3a3a;
+  color: var(--ink);
+  cursor: pointer;
+}
+button:hover:not(:disabled) {
+  background: #454545;
+}
+button.cta {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.cta:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: 2px;
+}
+
+.proposal-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 6px 0;
+}
+.proposal {
+  flex: 0 0 auto;
+  max-width: 150px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px;
+}
+.proposal:hover {
+  border-color: #6a9fd8;
+}
+.proposal-disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.proposal-disabled:hover {
+  border-color: transparent;
+}
+.proposal img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 2px;
+}
+.proposal-label {
+  font-weight: 600;
+  margin-top: 4px;
+}
+.proposal-reason {
+  opacity: 0.7;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.plan-status {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+#inputRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding-top: 8px;
+}
+/* Was sp-textarea. */
+#chatInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: none;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #262626;
+  color: var(--ink);
+  max-height: 140px;
+}
+#chatInput:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+#chatInput::placeholder {
+  color: #6e7378;
+}
+
+/* Settings, shown in place of the chat rather than over it - one panel at a
+   time is simpler than a modal, and there is nothing behind it worth seeing. */
+#settings {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+#settings h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+#settings label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+#settings input,
+#settings select {
+  width: 100%;
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: #262626;
+  color: var(--ink);
+}
+#settings .hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 5px;
+  line-height: 1.5;
+}
+#settingsMsg {
+  font-size: 12px;
+  min-height: 16px;
+}
+#settingsMsg.ok {
+  color: var(--ok);
+}
+#settingsMsg.bad {
+  color: var(--bad);
+}

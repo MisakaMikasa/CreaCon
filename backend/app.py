@@ -21,6 +21,7 @@ server is simply the half that is free to move.
 """
 
 import logging
+import os
 import threading
 import time
 import urllib.error
@@ -80,7 +81,15 @@ def run() -> None:
         width=WINDOW_SIZE[0],
         height=WINDOW_SIZE[1],
     )
-    webview.start()  # returns only when the user closes the window
+    # debug=True turns on the WebView2 devtools (right-click -> Inspect, or F12).
+    # Without it the page's console is unreachable, which makes a UI bug in here
+    # far harder to diagnose than the same bug in the UXP panel, where Adobe's
+    # debugger was always a click away. Off unless CREACON_DEBUG is set, so a
+    # shipped build does not hand users a devtools window.
+    debug = os.environ.get("CREACON_DEBUG", "") not in ("", "0")
+    if debug:
+        logger.info("devtools enabled (CREACON_DEBUG) - right-click the window to inspect")
+    webview.start(debug=debug)  # returns only when the user closes the window
 
 
 if __name__ == "__main__":

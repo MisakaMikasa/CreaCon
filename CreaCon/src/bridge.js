@@ -11,6 +11,7 @@
 // a second door into the same room, not a replacement, and it stays that way
 // until the desktop UI has proven itself.
 
+const { capturePreviewImage, readLayerContext } = require("./aiClient");
 const { validateEditPlan } = require("./validator");
 const { applyEditPlan } = require("./executor/index");
 const { log, error, formatError } = require("./log");
@@ -74,10 +75,38 @@ async function runApply(msg) {
     const check = validateEditPlan(msg.plan);
     if (!check.valid) throw new Error(check.errors.join("; "));
 
+    // Two step results are not just progress - they drive cards in the UI, and
+    // only this side can pick them out, because only this side sees step.op.
+    let geometryReport = null;
+    let developResult = null;
+
     const results = await applyEditPlan(msg.plan, (i, step, result) => {
-      send({ type: "progress", id: msg.id, step: i, result });
+      if (step.op === "applyGeometry" && result) geometryReport = result;
+      if (step.op === "applyCameraRaw" && result) developResult = result;
+      send({ type: "progress", id: msg.id, step: i, op: step.op, result });
     });
-    send({ type: "done", id: msg.id, ok: true, results: results || [] });
+
+    // Camera Raw loads AI mask PARAMETERS headlessly but may not run the
+    // segmentation until nudged ("Update AI settings"), so an unchanged region
+    // would otherwise look like a failed edit.
+    const usesAiMask = (msg.plan.steps || []).some(
+      (s) =>
+        s.op === "applyCameraRaw" &&
+        ((s.params && s.params.settings && s.params.settings.MaskGroupBasedCorrections) || []).some(
+          (c) => (c.CorrectionMasks || []).some((m) => m.What === "Mask/Image")
+        )
+    );
+
+    send({
+      type: "done",
+      id: msg.id,
+      ok: true,
+      results: results || [],
+      summary: msg.plan.summary || "the edit",
+      geometryReport,
+      developResult,
+      usesAiMask,
+    });
     log(`bridge: applied plan ${String(msg.id).slice(0, 8)}`);
   } catch (err) {
     error("bridge: apply failed", err);
@@ -85,6 +114,32 @@ async function runApply(msg) {
   } finally {
     busy = false;
   }
+}
+
+// The desktop app cannot export a canvas JPEG or list layers - both need the
+// document, which only exists in here. So the backend asks for them on the
+// app's behalf whenever a chat turn arrives without any.
+async function sendContext(msg) {
+  const context = { layer_names: [], selected_layers: [] };
+  try {
+    context.image_base64 = await capturePreviewImage();
+  } catch (err) {
+    // A text-only turn is degraded but still useful, so a failed preview must
+    // not fail the turn. capturePreviewImage already returns null on its own
+    // failures; this catches anything it does not.
+    error("bridge: preview capture failed", err);
+    context.image_base64 = null;
+  }
+  try {
+    Object.assign(context, await readLayerContext());
+  } catch (err) {
+    error("bridge: layer context failed", err);
+  }
+  send({ type: "context_result", id: msg.id, context });
+  log(
+    `bridge: sent context (${context.layer_names.length} layer(s), preview ` +
+      `${context.image_base64 ? "yes" : "no"})`
+  );
 }
 
 async function connect() {
@@ -138,6 +193,8 @@ async function connect() {
       log(`bridge: connected to ${url}`);
     } else if (msg.type === "apply") {
       runApply(msg);
+    } else if (msg.type === "context") {
+      sendContext(msg);
     }
   };
 
