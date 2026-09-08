@@ -1,7 +1,7 @@
 {
   "id": "CreaCon",
   "name": "CreaCon",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "main": "index.html",
   "host": {
     "app": "PS",
@@ -10,7 +10,20 @@
   "manifestVersion": 5,
   "requiredPermissions": {
     "network": {
-      "domains": ["http://localhost:8000"]
+      "domains": [
+        "http://localhost:8000",
+        "http://localhost:8731",
+        "http://localhost:8732",
+        "http://localhost:8733",
+        "http://localhost:8734",
+        "http://localhost:8735",
+        "ws://localhost:8000",
+        "ws://localhost:8731",
+        "ws://localhost:8732",
+        "ws://localhost:8733",
+        "ws://localhost:8734",
+        "ws://localhost:8735"
+      ]
     },
     "localFileSystem": "fullAccess"
   },

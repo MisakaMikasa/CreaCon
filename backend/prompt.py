@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema" / "editPlan.schema.json"
+from paths import resource
+
+SCHEMA_PATH = resource("schema", "editPlan.schema.json")
 _schema_text = SCHEMA_PATH.read_text()
 
 

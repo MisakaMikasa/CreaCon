@@ -1,9 +1,11 @@
 import json
 from pathlib import Path
 
+from paths import resource
+
 from jsonschema import validate
 
-SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema" / "editPlan.schema.json"
+SCHEMA_PATH = resource("schema", "editPlan.schema.json")
 _schema = json.loads(SCHEMA_PATH.read_text())
 
 

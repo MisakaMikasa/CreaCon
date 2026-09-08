@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CreaCon</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="chat">
+
+  <!-- Not in the UXP panel, and the most important thing here. The app can be
+       perfectly healthy while Photoshop is closed or the plugin is detached,
+       and an Apply would then fail with a 503 the user has no way to predict.
+       A permanent indicator turns that into something visible beforehand. -->
+  <div id="status">
+    <span id="statusDot"></span>
+    <span id="statusText">connecting…</span>
+    <span class="spacer"></span>
+    <button id="btnSettings" title="Settings">⚙</button>
+  </div>
+
+  <div id="messages"></div>
+
+  <div id="settings" hidden>
+    <h2>Settings</h2>
+    <div>
+      <label for="apiKey">Gemini API key</label>
+      <input id="apiKey" type="password" placeholder="AIza…" autocomplete="off" spellcheck="false">
+      <div class="hint">
+        Stored in <code>config.json</code> in your AppData folder. It is sent only to
+        Google, and only when you ask for an edit.
+      </div>
+    </div>
+    <div>
+      <label for="provider">Model provider</label>
+      <select id="provider">
+        <option value="gemini">Google Gemini</option>
+        <option value="anthropic">Anthropic Claude</option>
+      </select>
+    </div>
+    <div id="settingsMsg"></div>
+    <div class="plan-actions">
+      <button id="btnSaveSettings" class="cta">Save</button>
+      <button id="btnCloseSettings">Back to chat</button>
+    </div>
+  </div>
+
+  <div id="inputRow">
+    <textarea id="chatInput" rows="2"
+      placeholder="Ask for edits, or describe the look you want…"></textarea>
+    <button id="btnSend" class="cta">Send</button>
+    <button id="btnOpenRaw" title="Open a RAW or JPEG photo for AI develop editing">📷</button>
+  </div>
+
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
