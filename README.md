@@ -1,284 +1,197 @@
-# CreaCon — an AI photo-editing agent inside Adobe Photoshop
+# CreaCon
 
-CreaCon is a Photoshop plugin that lets you edit photos by talking to an AI. You describe what
-you want ("make this warmer and more cinematic, but keep it natural", "dim only the left 25%",
-"boost the blues in the sky") and the agent plans and performs the edit **as real, editable
-Photoshop operations** — adjustment layers, masks, groups, blend modes — never a flattened,
-opaque result.
+**Edit photos in Photoshop by describing what you want.**
 
-The core idea: most AI photo tools *generate* a new image. CreaCon instead **operates the
-software the way a retoucher would**, so every edit it makes remains inspectable, tweakable,
-and reversible in the Layers panel afterward. The AI proposes; you approve; Photoshop executes.
+You type *"warmer and more cinematic, but keep it natural"*. CreaCon looks at your
+photo, plans the edit, shows you the steps, and — once you approve — performs them
+as **real Camera Raw develop settings and real adjustment layers**.
+
+Nothing is generated. Nothing is flattened. Every edit it makes is one you could
+have made yourself, and you can adjust or undo any of it afterwards in the panels
+you already know.
+
+<!-- TODO: drag an MP4 into GitHub's README editor and paste the
+     user-attachments URL here. ~30s: type a request, plan card, layers appear. -->
+
+---
+
+## What you can ask for
+
+**Develop a photo** — RAW or JPEG, through Camera Raw:
+
+> *"recover the highlights and warm it up"*
+> *"give me a faded film look"*
+> *"the sky is too pale — deepen the blues"*
+
+Exposure, contrast, true Kelvin white balance, highlight and shadow recovery,
+texture, clarity, dehaze, the full HSL colour mixer, split-tone colour grading,
+sharpening, noise reduction, grain and vignette.
+
+**Edit part of a photo** — it works out the masks itself:
+
+> *"darken just the sky"*
+> *"brighten her face a little"*
+> *"warm the left third of the frame"*
+
+Sky, subject and person selection, plus linear and radial gradients — each
+carrying its own develop settings.
+
+**Recompose:**
+
+> *"straighten the horizon"*
+> *"fix the converging verticals"*
+> *"crop this tighter"*
+
+It measures what a straighten costs before doing it, and says so: *"straightening
+2 degrees, which trims about 10% of the frame."* On open-ended requests it offers
+crop options as thumbnails rather than deciding for you.
+
+**Work on ordinary layers** too — adjustment layers, masks, blend modes and groups
+on any PSD.
+
+**Then refine.** It knows what it just did, so *"stronger"*, *"other side"*,
+*"make that gentler"* all work as follow-ups.
+
+---
+
+## Setup
+
+You need **Photoshop 27.8 or newer** and a **Google Gemini API key**
+([get one free](https://aistudio.google.com/apikey)).
+
+### 1. Settings you must change first
+
+CreaCon cannot work without these. Two are in Camera Raw, one is in Photoshop.
+
+#### Camera Raw → File Handling
+
+Open Camera Raw (double-click any raw photo), click the **⚙ gear icon**, then
+**File Handling**:
+
+| Setting | Set it to | Why |
+|---|---|---|
+| **Save image settings in** | **Sidecar ".xmp" files** | **Required.** Otherwise Camera Raw keeps your develop settings in its own database, where CreaCon can neither read nor write them. Nothing will work. |
+| **JPEG/HEIC → Automatically open all supported JPEGs** | ✅ on | Required only if you want to edit JPEGs. Without it Photoshop opens them directly and skips Camera Raw entirely. |
+
+#### Photoshop → Performance
+
+**Ctrl+K → Performance → Graphics Processor Settings → untick "Use Graphics
+Processor"**, then restart Photoshop.
+
+**This is a Photoshop bug, not a CreaCon one**, and it is worth knowing what it
+looks like: on **Photoshop 27.10** the canvas renders noticeably *more saturated*
+than the Camera Raw dialog showing the same photo. The GPU canvas skips the
+document-to-display colour conversion — so the canvas is wrong and Camera Raw is
+right.
+
+It affects the **canvas only**; files you save or export are correct either way,
+and it happens on every import, with or without CreaCon.
+
+Turning the GPU off costs some canvas performance. 27.9.1 is unaffected and Adobe
+has escalated it, so try switching it back on once 27.11 ships.
+
+> ⚠️ If colours ever differ between Camera Raw and the canvas, check your Photoshop
+> version before suspecting CreaCon. CreaCon writes develop settings and touches
+> nothing to do with colour management.
+
+### 2. Install
+
+1. Run the CreaCon installer and launch the app.
+2. Open **⚙ Settings**, paste your Gemini API key, **Save**, then restart CreaCon.
+3. Open Photoshop. The CreaCon panel should show a green dot and *"Connected"*.
+
+---
+
+## Using it
+
+1. **Open a photo with the 📷 button.** This matters — it is how CreaCon places the
+   photo so it can develop it later. A photo you opened yourself cannot be
+   develop-edited. If it already has develop settings, you will be asked whether to
+   keep them or start fresh.
+2. **Type what you want.**
+3. **Read the plan, click Apply.** Nothing touches your document until you do.
+4. **Keep going.** Refine, or restore any earlier state from its card.
+
+**Photoshop freezes while an edit applies.** That is Photoshop, not a crash — it
+blocks its own interface while a script runs, and Camera Raw takes a few seconds to
+re-develop a large raw. The CreaCon window stays responsive throughout.
+
+---
+
+## Things worth knowing
+
+**AI masks need one manual nudge, the first time.** When CreaCon adds a sky,
+subject or person mask, Camera Raw loads the settings but does not always run the
+selection itself. If the region looks untouched, double-click the layer to open
+Camera Raw and click **"Update AI settings"** once. It stays put after that.
+Gradient masks never need this.
+
+**Ctrl+Z undoes the picture, not the file.** Develop settings live in a sidecar
+file beside your photo, which Photoshop's undo cannot reach. Use **"Restore to
+before this"** on the edit's card instead — every develop edit saves one.
+
+**One photo, one set of edits.** Duplicating a photo layer does not duplicate the
+photo: both layers point at the same file, and a file holds one develop state, so
+editing one changes both. To grade the same photo two ways, import it twice with 📷
+(JPEG) or duplicate the raw file on disk first (RAW). CreaCon warns you when it
+spots this.
+
+**Keep your photos where they are.** CreaCon edits raws in place through their
+sidecar files, so the PSD alone is not portable — move the photos and the link
+breaks.
+
+**Your API key stays on your machine.** It is stored in your own AppData folder and
+sent only to Google, only when you ask for an edit.
+
+---
+
+## Limitations
+
+- **RAW** (CR2, CR3, NEF, ARW, RAF, ORF, RW2) and **JPEG**. **DNG is not
+  supported** — it stores settings somewhere CreaCon cannot reach.
+- **No retouching.** No healing, cloning or content-aware fill. CreaCon works with
+  the non-destructive toolset by design, so everything stays reversible.
+- **It sees the flattened image**, not individual layers, so it cannot tell which of
+  several image layers holds what. Name them, or select the one you mean.
+- Photos opened outside CreaCon cannot be develop-edited — use 📷.
+- Windows only for now.
+
+---
 
 ## How it works
 
 ```
-┌────────────────────┐  chat + canvas JPEG   ┌──────────────────┐   messages    ┌─────────────┐
-│  Photoshop (UXP)   │  + layer context      │  FastAPI backend │──────────────▶│ Gemini or   │
-│  chat panel        │──────────────────────▶│  /chat           │◀──────────────│ Claude      │
-│                    │◀──────────────────────│  validate plan   │  reply +      └─────────────┘
-│  plan card         │   reply + edit plan   │  (JSON Schema)   │  ```json plan
-│  [Apply] [Cancel]  │                       └──────────────────┘
-│        │ Apply                                      ▲
-│        ▼                                            │
-│  executor: batchPlay / DOM API ── applied result fed back into the conversation
-└────────────────────┘
+  You                CreaCon app                Photoshop
+   │                      │                          │
+   │─ "warmer, please" ──▶│                          │
+   │                      │── what am I looking at? ▶│
+   │                      │◀── photo + layers ───────│
+   │                      │                          │
+   │                      │──▶ Gemini ──▶ a plan     │
+   │◀──── plan card ──────│                          │
+   │                      │                          │
+   │──── Apply ──────────▶│── do this ──────────────▶│
+   │                      │                          │ Camera Raw
+   │◀──── "Applied" ──────│◀── done ─────────────────│ + layers
 ```
 
-1. **You chat.** The panel sends the conversation, a JPEG preview of your canvas (so the model
-   *sees* the photo), and the current layer stack + selection to the backend.
-2. **The model talks or acts.** It can discuss/suggest freely; when you want changes applied,
-   it emits a structured edit plan (a fenced JSON block matching a strict schema).
-3. **The plan is validated twice** — against the JSON Schema on the backend (with one
-   self-correcting retry if the model produced an invalid plan) and structurally again in the
-   plugin.
-4. **You approve.** The plan renders as a step list with Apply/Cancel. Nothing touches your
-   document without a click.
-5. **The plugin executes** each step live via Photoshop's batchPlay/DOM APIs, staggered so you
-   can watch the layers appear. The whole edit is one History entry — a single Ctrl/Cmd+Z
-   undoes it — and the result ("Applied: …") is fed back into the conversation so you can
-   iterate ("make that curve gentler", "move the vignette left").
+The app holds the conversation and talks to the model. A small Photoshop plugin
+does the actual work, because only something running inside Photoshop can. Every
+plan is checked against a strict schema before it is allowed to run, and nothing
+runs without your click.
 
-## What's currently supported
+The interesting part: **Camera Raw cannot be scripted.** Adobe deliberately ignores
+settings sent to its dialog. CreaCon controls it a different way — it writes the
+develop settings into the photo's `.xmp` sidecar and makes Camera Raw re-read the
+file. That is also why the sidecar preference above is not optional.
 
-### Operations (7)
+---
 
-| Op | Description |
-|---|---|
-| `createAdjustmentLayer` | Create an adjustment layer with real settings applied |
-| `updateAdjustmentLayer` | Modify an **existing** adjustment layer in place (refinements don't stack duplicates) |
-| `addMask` | Constrain a layer's effect to part of the image |
-| `setBlendMode` | Set a layer's blend mode (18 modes: multiply, screen, overlay, softLight, color, luminosity, …) |
-| `setLayerOpacity` | Set layer opacity 0–100 |
-| `renameLayer` | Rename a layer |
-| `createGroup` | Group layers into a folder (searches nested layers) |
-| `applyCameraRaw` | Develop a RAW photo (true raw latitude) by rewriting its XMP sidecar and re-importing — see below |
+## License
 
-### Adjustment types (6)
+Source-available, not open source. You may **use** CreaCon freely, for anything,
+including commercially. You may not modify or redistribute it. See
+[LICENSE](LICENSE).
 
-| Type | Settings the AI controls |
-|---|---|
-| `brightnessContrast` | brightness, contrast |
-| `hueSaturation` | hue / saturation / lightness — on **master or a single color range** (reds…magentas) |
-| `colorBalance` | shadow/midtone/highlight color triples (warm/cool grading) |
-| `vibrance` | vibrance, saturation |
-| `exposure` | exposure (stops), offset, gamma |
-| `curves` | point-based curve `[[in,out],…]`, per channel (composite/R/G/B) |
-
-### Mask types (6)
-
-| Type | Controls |
-|---|---|
-| `selectSubject` | Photoshop's built-in AI subject selection |
-| `selectSky` | Photoshop's built-in sky selection |
-| `linearGradient` | `direction` (left/right/top/bottom) **or** arbitrary `angle` (diagonals), `size` (how far the fade reaches — e.g. "only the left 25%"), `strength` |
-| `radialGradient` | `center` [x,y] (the AI estimates the subject's position from the preview), `size` (radius), `region` (center spotlight vs edge vignette), `strength` |
-| `full` / `invert` | Whole-image masks |
-
-### RAW develop editing (Camera Raw via XMP sidecar)
-
-Adobe Camera Raw cannot be scripted directly (its filter dialog ignores scripted settings —
-a longstanding, deliberate limitation). CreaCon controls it **declaratively** instead: the
-`applyCameraRaw` op writes the complete develop state (exposure, highlights/shadows, true
-Kelvin white balance, texture/clarity/dehaze, vibrance/saturation — Adobe's `crs:` keys)
-into the raw file's `.xmp` sidecar, then forces a re-import so ACR re-develops the photo
-with the new settings. The re-import is `placedLayerRelinkToFile` (re-pointing the link at
-the same raw) — NOT `placedLayerReplaceContents`, which silently converts the linked smart
-object to embedded and breaks the manual-edit merge; replaceContents remains only as the
-fallback for legacy embedded layers. Linked-ness is detected via `smartObject.linked` on
-the full layer descriptor (`smartObjectMore.link` never carries it). Verified end-to-end
-by the spike harnesses in `CreaCon/src/spike/` (kept as unwired dev tools — re-attach to a
-button if the mechanism ever needs re-testing).
-
-Flow: click **📷 Open RAW** in the panel (this places the raw as a **linked** smart object
-and records its file path), then just chat: *"recover the highlights and make it warmer"*.
-Linked placement is deliberate and spike-verified: manual edits made by double-clicking the
-layer into ACR are written to the **same sidecar** CreaCon uses, so hand edits and AI edits
-merge instead of overwriting each other (global settings today; masks once parse-back
-lands). The trade: the raw file must stay at its path (a dependency the sidecar mechanism
-has anyway) and the PSD alone isn't portable — keep the raws with it.
-
-The develop vocabulary covers the Basic panel, the full **HSL color mixer**, **color
-grading** (split toning), detail (sharpen/NR), grain/vignette, and **local masks** —
-each `MaskGroupBasedCorrections` entry is a region (AI **sky/subject/person** via
-`Mask/Image`, linear `Mask/Gradient`, radial `Mask/CircularGradient`) carrying its own
-develop values (`LocalExposure2012` etc., normalized −1..+1). The mask vocabulary and
-units follow Adobe's own `crs:` conventions (cross-checked against JarvisArt's).
-
-**Routing doctrine** (encoded in `backend/prompt.py`):
-
-| Edit intent | Route |
-|---|---|
-| Global tone / WB / HSL / grading / detail on a photo layer | `applyCameraRaw` flat keys |
-| Regional tone/color on a photo (sky, subject, gradients) | `applyCameraRaw` local masks |
-| Anything on a plain PSD / rasterized layer | adjustment layers + masks |
-| Content masks (sky/subject) on non-photo layers | `addMask` selectSky/selectSubject |
-| Discrete toggleable layers, blend modes, groups | PS-native ops, even on photo docs |
-
-Both **RAW and JPEG** go through Camera Raw — same ops, same vocabulary. The only
-difference is latitude: a JPEG is 8-bit and already clipped, so the prompt tells the
-model to make smaller moves (see `docs/jpeg-develop-design.md`). A JPEG's develop
-settings live *inside the image file*, not in a sidecar, so CreaCon edits a working
-copy and never writes to the user's original.
-
-Limitations:
-
-- RAW (CR2/CR3/NEF/ARW/RAF/ORF/RW2) and JPEG. **DNG is not supported** (it embeds
-  settings in a container the sidecar/packet mechanism can't reach).
-- JPEG develop needs the ACR preference *File Handling → JPEG/HEIC → automatically
-  open all supported JPEGs*, in addition to the sidecar preference below.
-- Smart objects created *outside* CreaCon (e.g. ACR's own "Open as Smart Object")
-  can't be develop-edited — their source path is unrecoverable. Use 📷.
-- The path registry persists across sessions (`rawRegistry.json` in the plugin data
-  folder, keyed by document path → layer ID, so multiple raws per document are fine).
-  Caveats: raws imported into a **never-saved** document are tracked for the current
-  session only (saving the document makes them permanent), and **Save As** to a new
-  path orphans the mapping — re-import via 📷 in that case.
-- Import applies no edits of its own; when a raw arrives with existing develop settings,
-  the user chooses at import time to keep them (fully read back, masks included) or start
-  fresh. "Fresh" DISCARDS the old sidecar outright - no backup file is written; the previous
-  settings are only reported into the chat, so they can be re-applied that session by asking.
-- Ctrl+Z undoes the visual change but not the sidecar file; the model always sees the
-  sidecar's current state and can revert by re-applying previous settings.
-- Requires ACR preference "Save image settings in: **Sidecar '.xmp' files**".
-- **Edits made in the Camera Raw dialog that pops during an apply are DISCARDED until the
-  layer has been opened for editing at least once.** Isolated by experiment:
-
-  | sequence | ACR writes the sidecar? |
-  |---|---|
-  | apply -> edit in dialog -> apply -> edit in dialog | no, no |
-  | apply -> edit in dialog -> **double-click layer + edit** -> apply -> edit in dialog | no, **yes** |
-
-  So it is not a first-apply effect - repeated applies keep failing. What unlocks it is one
-  real editing session: ACR appears to write settings back only for a file it has a session
-  for, and the relink dialog alone is an *import*, so its settings go into that placement
-  and nowhere else. Double-clicking is Photoshop's smart-object edit path, which does
-  establish the association; afterwards the relink dialog inherits it.
-
-  **Fixed:** `establishAcrSession()` opens the raw into Camera Raw once during import
-  (`placedLayerEditContents`, the scripted double-click) purely to register the file. OK-ing
-  it with no changes is enough, and dialog edits are persisted from then on. That is what
-  the extra Camera Raw window at import is for - **do not remove it**, or every manual
-  adjustment made during an apply goes back to being silently discarded. `reloadRaw` logs
-  `ACR wrote back: YES/NO` after every relink as the detector; a "NO" means it has regressed.
-- Manual edits (double-clicking the linked layer into ACR, or Lightroom) are picked up by
-  re-reading the sidecar every turn and merged: the sidecar on disk is always the truth,
-  masks included. Manual
-  adjustments CreaCon can't model (brush strokes, range masks, local curves, local color
-  grading) are preserved verbatim across applies and surfaced to the AI as
-  `"Unsupported": true` corrections it must copy forward.
-- **AI masks** (sky/subject/person) load with the sidecar, but each **new** mask needs one
-  manual **"Update AI settings"** click in ACR to run the segmentation (no scriptable
-  trigger exists — Adobe's design). After that, ACR's computed digests are preserved
-  through CreaCon rewrites, so value tweaks don't re-prompt. Geometric masks
-  (linear/radial) are fully headless. Person masks (`MaskSubType` 3) require an actual
-  person in the frame — ACR errors otherwise; the prompt steers the model accordingly.
-
-### Agent capabilities
-
-- **Vision-grounded**: the model receives a JPEG of the current canvas each turn, so it reasons
-  about the actual photo (dominant colors, subject position) — not just your words.
-- **Layer-aware**: knows every layer's name and which are selected; vague targets ("this
-  layer") resolve to your selection.
-- **Conversational refinement**: applied results are injected back into the chat, so
-  "stronger", "other side", "make the circle bigger" work as follow-ups.
-- **Dual LLM providers**: Google Gemini and Anthropic Claude behind a common adapter —
-  switch with one line in `.env` (`LLM_PROVIDER=gemini|anthropic`).
-- **Robust plan handling**: tolerant JSON extraction (handles unclosed/missing code fences),
-  schema validation, and a single corrective retry that feeds the exact validation error back
-  to the model. Never loops.
-
-## Getting started
-
-### 1. Backend
-
-```
-cd backend
-python -m venv .venv
-.venv\Scripts\activate            # Windows; source .venv/bin/activate elsewhere
-pip install -r requirements.txt
-copy .env.example .env            # fill in your provider + API key
-uvicorn main:app --reload --port 8000
-```
-
-`.env` picks the provider: set `LLM_PROVIDER` to `gemini` or `anthropic` and supply the
-matching API key. Only the SDK for the provider you use needs credentials.
-
-### 2. Plugin
-
-1. Open Photoshop (v27.8+) with any image.
-2. In **UXP Developer Tools**: *Add Plugin* → select `CreaCon/manifest.json` → *Load*.
-3. The CreaCon panel opens. Type a request, review the proposed plan, press **Apply**.
-
-## Repository layout
-
-```
-schema/editPlan.schema.json   # THE contract: single source of truth for what a valid edit is
-scripts/sync-schema.js        # copies the schema into the plugin bundle (UXP can't require() outside it)
-backend/
-  main.py                     # FastAPI routes: /chat (conversational) + /edit-plan (legacy one-shot)
-  llm_client.py               # provider dispatcher (lazy imports)
-  llm_providers/              # anthropic_provider.py, gemini_provider.py
-  prompt.py                   # system prompts; embeds the schema + op/settings contract
-  plan_extract.py             # tolerant fenced-JSON plan extraction + validation
-  validator.py                # jsonschema enforcement
-CreaCon/                      # the UXP plugin
-  src/panel.js                # chat UI, plan cards, Apply gate
-  src/aiClient.js             # canvas JPEG capture + layer context + /chat call
-  src/validator.js            # client-side structural re-check (derived from the schema)
-  src/executor/               # one module per op; batchPlay + DOM API execution
-```
-
-The schema is deliberately the **single source of truth**: it is handed to the LLM (as a tool
-schema or embedded in the prompt), enforced by the backend validator, and drives the plugin's
-own pre-execution check — three consumers, one definition, no drift.
-
-## Development notes
-
-- **Schema changes**: edit `schema/editPlan.schema.json`, then run `node scripts/sync-schema.js`
-  and reload the plugin.
-- **Debugging the plugin**: UXP Developer Tools → ••• → *Debug*, filter the console by
-  `CreaCon`. Every executor logs the exact batchPlay descriptor sent and the result Photoshop
-  returned.
-- **batchPlay descriptors are verified, not guessed.** Photoshop's ActionDescriptor format is
-  under-documented and a wrong descriptor often silently no-ops. The workflow that works:
-  record the action manually in Photoshop (Actions panel → *Copy as Javascript*, requires
-  developer mode), then diff the captured descriptor against what the executor logs.
-  Hard-won specifics encoded in the executors:
-  - Adjustment layers are born with a reveal-all mask — delete it before adding a mask from a
-    selection (otherwise "Make" is unavailable and silently fails).
-  - Hue/Saturation and Curves values must be applied via a follow-up `set` on the created
-    layer (create-then-set); baking them into `make` does not apply them.
-  - Gradient fills need `useMask: true` to paint the layer mask, and the `grayscale` color's
-    `gray` field is an **ink percentage** — 0 is white, 100 is black.
-- **Anything that mutates the document** must run inside `core.executeAsModal()` — including
-  exporting the preview JPEG.
-
-## Known limitations / roadmap
-
-- **The panel freezes while an edit applies, and this is not fixable from inside the panel.**
-  Every apply runs in `core.executeAsModal`, and per Adobe: *"When Photoshop is in a modal
-  state during executeAsModal() the entire UI thread is blocked. Mouse clicks cannot be
-  processed at all."* So during an apply no button anywhere in the panel responds — not just
-  the one you pressed — and the freeze lasts as long as Camera Raw takes to re-develop the
-  raw, which is seconds for a 26MP file.
-
-  What has been done: the `STEP_DELAY_MS` stagger no longer runs after the *last* step (it
-  was adding a pointless 400 ms freeze to every single-step apply), and `busy` now renders
-  every card's buttons disabled during an apply, so the freeze reads as "wait" rather than
-  "broken". Neither makes Photoshop faster.
-
-  What would NOT fix it: moving the UI to an external window. Adobe supports that (WebSocket
-  to a desktop helper), and the window would stay responsive — but the work still runs
-  through `executeAsModal`, the bridge plugin is still blocked while it does, and the edit
-  takes exactly as long. It buys feedback, not speed. The stronger argument for an external
-  UI is UXP's partial DOM (no `composedPath()`, Spectrum upgrade timing) rather than this.
-- No pixel-level or content-aware edits by design — the agent's vocabulary is intentionally
-  the non-destructive toolset (this is a feature, but means no healing/retouch ops).
-- The model sees the *composited* canvas, not per-layer thumbnails, so it can't visually
-  identify which of several image layers contains what — targeting relies on names/selection.
-- Color Range masks ("mask just the skin tones / brightest areas") — captured descriptor in
-  hand, not yet wired up.
-- Levels, Photo Filter, Black & White, Selective Color adjustment types not yet exposed.
-- Responses are non-streaming (a thinking indicator plays during the request).
-- Backend is a local dev server; CORS is wide open and there is no auth — do not deploy as-is.
+The source is here to be read and run — the comments explain *why* each mechanism
+is shaped the way it is, which is most of the value.
