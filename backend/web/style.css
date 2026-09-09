@@ -128,6 +128,25 @@ body {
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
+/* Markdown inside an assistant reply. The bubble sets white-space: pre-wrap for
+   plain text, so block elements inside it must not add their own margins or the
+   spacing doubles. */
+.bubble-assistant > div { margin: 0; }
+.bubble-assistant ul {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+.bubble-assistant li { margin-bottom: 2px; }
+.bubble-assistant strong { font-weight: 600; }
+.bubble-assistant code {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.9em;
+  background: #00000038;
+  padding: 0.1em 0.32em;
+  border-radius: 3px;
+}
+.bubble-assistant br { line-height: 0.6; }
+
 .bubble-user {
   background: var(--accent);
   color: #ffffff;
