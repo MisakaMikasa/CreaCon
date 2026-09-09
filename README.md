@@ -1,6 +1,10 @@
+<img src="assets/icon-512.png" width="96" align="left" alt="">
+
 # CreaCon
 
 **Edit photos in Photoshop by describing what you want.**
+
+<br clear="left">
 
 You type *"warmer and more cinematic, but keep it natural"*. CreaCon looks at your
 photo, plans the edit, shows you the steps, and — once you approve — performs them

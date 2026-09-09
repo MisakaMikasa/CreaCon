@@ -549,6 +549,11 @@ async def cache_remove(req: CacheRemoveRequest):
         raise HTTPException(503, str(exc) or "the plugin did not answer")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(resource("assets", "creacon.ico"))
+
+
 @app.get("/")
 def index():
     return FileResponse(WEB_DIR / "index.html")
