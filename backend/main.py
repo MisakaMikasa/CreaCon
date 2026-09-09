@@ -27,7 +27,7 @@ from validator import validate_edit_plan
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("creacon")
 
-VERSION = "0.6.1"
+VERSION = "0.6.3"
 
 # Feature toggles (env). GRID_OVERLAY draws the coordinate ruler on previews
 # (default on; set 0 to A/B against the un-gridded baseline). VERIFY_MASKS runs
