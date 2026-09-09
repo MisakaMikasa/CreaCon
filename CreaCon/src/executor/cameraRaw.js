@@ -420,9 +420,47 @@ async function listRawLayers(doc) {
       kind,
       aliases: duplicates(entry),
       settings: maskSpace(settings, geometry, aspect, false),
+      // The model was previously told a photo's develop settings but never its
+      // FRAME, so "never crop a photo that is already cropped" was a rule it
+      // could not check. Worse, after a crop was restored it had no evidence the
+      // crop was gone - only a stale "Cropped: ..." note in the conversation -
+      // so the next plan re-applied it.
+      frame: describeFrame(geometry),
     });
   }
   return raws;
+}
+
+// What the model needs to know about a photo's current frame: is it cropped,
+// is it straightened, is perspective correction on. Reported in plain terms
+// rather than raw crs: keys, because it is read as prose in the prompt.
+function describeFrame(geometry) {
+  const rect = geometryMath.cropRectOf(geometry);
+  const angle = (geometry && geometry.CropAngle) || 0;
+  const upright = (geometry && geometry.PerspectiveUpright) || 0;
+
+  // HasCrop with a full-frame rectangle is how a straighten (and our own
+  // uncrop) is expressed, so the flag alone does not mean "cropped".
+  const full =
+    !rect ||
+    (rect.left <= 0.001 && rect.top <= 0.001 && rect.right >= 0.999 && rect.bottom >= 0.999);
+
+  const out = { cropped: !full, straightened: Math.abs(angle) > 0.01, upright: upright !== 0 };
+  if (!full) {
+    out.crop = {
+      left: round3(rect.left),
+      top: round3(rect.top),
+      right: round3(rect.right),
+      bottom: round3(rect.bottom),
+    };
+    out.keeps = round3((rect.right - rect.left) * (rect.bottom - rect.top));
+  }
+  if (out.straightened) out.angle = Math.round(angle * 100) / 100;
+  return out;
+}
+
+function round3(n) {
+  return Math.round(n * 1000) / 1000;
 }
 
 // --- resolving layers to photos ---------------------------------------------------
