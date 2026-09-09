@@ -308,7 +308,7 @@ async function onSend() {
       body: JSON.stringify({ messages: conversationForApi() }),
     });
     if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 300)}`);
-    const { reply, edit_plan, geometry_previews } = await res.json();
+    const { reply, edit_plan, geometry_previews, context_notes: ctxNotes } = await res.json();
 
     // panel.js logged this and the desktop version did not, which made "no
     // Apply button" impossible to tell apart from "the model proposed nothing".
@@ -322,6 +322,10 @@ async function onSend() {
     );
 
     removeMessage(thinkingMsg);
+    // Before the reply: these explain why the edit about to be planned behaves
+    // the way it does (e.g. two layers that are one photo). The model already
+    // saw them - the backend folded them in as [note] turns.
+    (ctxNotes || []).forEach((text) => conversation.push({ role: "system", text }));
     conversation.push({
       role: "assistant",
       text: reply || "(no reply)",
@@ -621,6 +625,57 @@ async function onOpenRaw() {
   }
 }
 
+// ----------------------------------------------------------- cache cleanup
+
+// Two calls with a human decision between them. survey() deletes nothing; the
+// paths it returns are the only ones remove() is ever given, so the user is
+// confirming exactly what they were shown rather than a count that might have
+// changed underneath them.
+let removablePaths = [];
+
+async function onCacheCheck() {
+  say(el("cacheMsg"), "Checking…", "");
+  el("btnCacheClean").hidden = true;
+  try {
+    const res = await fetch("/cache/survey", {
+      method: "POST",
+      headers: { "X-CreaCon-Token": token },
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const s = await res.json();
+    el("cacheSummary").textContent = s.summary;
+    removablePaths = s.removable || [];
+    el("btnCacheClean").hidden = removablePaths.length === 0;
+    el("btnCacheClean").textContent =
+      removablePaths.length === 1 ? "Delete 1 copy" : `Delete ${removablePaths.length} copies`;
+    say(el("cacheMsg"), removablePaths.length ? "" : "Nothing to clean up.", "ok");
+  } catch (err) {
+    say(el("cacheMsg"), `Couldn't check: ${err.message}`, "bad");
+  }
+}
+
+async function onCacheClean() {
+  if (!removablePaths.length) return;
+  say(el("cacheMsg"), "Deleting…", "");
+  try {
+    const res = await fetch("/cache/remove", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CreaCon-Token": token },
+      body: JSON.stringify({ paths: removablePaths }),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const r = await res.json();
+    let text = `Removed ${r.removed} ${r.removed === 1 ? "copy" : "copies"}, freed ${r.freed}.`;
+    if (r.errors && r.errors.length) text += ` ${r.errors.length} couldn't be removed.`;
+    say(el("cacheMsg"), text, "ok");
+    removablePaths = [];
+    el("btnCacheClean").hidden = true;
+    el("cacheSummary").textContent = "Not checked yet.";
+  } catch (err) {
+    say(el("cacheMsg"), `Couldn't delete: ${err.message}`, "bad");
+  }
+}
+
 // -------------------------------------------------------------------- setup
 
 function setup() {
@@ -630,6 +685,8 @@ function setup() {
   el("btnSend").addEventListener("click", onSend);
   el("btnOpenRaw").addEventListener("click", onOpenRaw);
   el("btnSaveSettings").addEventListener("click", onSaveSettings);
+  el("btnCacheCheck").addEventListener("click", onCacheCheck);
+  el("btnCacheClean").addEventListener("click", onCacheClean);
 
   // Enter sends, Shift+Enter makes a newline - what every chat box does, and
   // impossible to get right against UXP's sp-textarea.

@@ -326,3 +326,19 @@ button:focus-visible {
 #settingsMsg.bad {
   color: var(--bad);
 }
+
+/* A settings block that is not a form field - the cache section needs a rule
+   above it so it reads as a separate concern from the key and the provider. */
+.settings-section {
+  border-top: 1px solid #34383b;
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+#cacheMsg {
+  font-size: 12px;
+  min-height: 16px;
+}
+#cacheMsg.ok { color: var(--ok); }
+#cacheMsg.bad { color: var(--bad); }

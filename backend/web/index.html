@@ -45,6 +45,19 @@
       <button id="btnSaveSettings" class="cta">Save</button>
       <button id="btnCloseSettings">Back to chat</button>
     </div>
+
+    <!-- Cached working copies. Moved here from the panel's 🧹 button: deleting
+         files is a settings-shaped action, and a settings screen has room to
+         say what goes and what stays before asking. -->
+    <div class="settings-section">
+      <label>Cached photo copies</label>
+      <div class="hint" id="cacheSummary">Not checked yet.</div>
+      <div id="cacheMsg"></div>
+      <div class="plan-actions">
+        <button id="btnCacheCheck">Check</button>
+        <button id="btnCacheClean" hidden>Delete them</button>
+      </div>
+    </div>
   </div>
 
   <div id="inputRow">

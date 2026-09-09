@@ -27,6 +27,7 @@ const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 
 let socket = null;
+let connectedPort = null;
 let stopped = false;
 let attempt = 0;
 
@@ -119,6 +120,56 @@ async function runApply(msg) {
   }
 }
 
+// Duplicating a photo layer in Photoshop does NOT duplicate the photo - both
+// layers point at the same file, and a file has exactly one develop state. So
+// the two layers are locked together forever: any edit changes both, and there
+// is no way to grade them differently.
+//
+// That is genuinely surprising, and silent, so say it once. Warned per set of
+// duplicates rather than per turn, so it does not become noise the user learns
+// to scroll past.
+const warnedDuplicates = new Set();
+
+async function duplicateLayerNotes() {
+  const notes = [];
+  try {
+    const { app } = require("photoshop");
+    const { photoLayersIn } = require("./executor/cameraRaw");
+    const doc = app.activeDocument;
+    if (!doc) return notes;
+
+    for (const photo of await photoLayersIn(doc)) {
+      const names = photo.aliases || [photo.name];
+      if (names.length < 2) continue;
+
+      const key = `${photo.filePath}::${names.slice().sort().join("|")}`;
+      if (warnedDuplicates.has(key)) continue;
+      warnedDuplicates.add(key);
+
+      const listed = names.map((n) => `"${n}"`).join(" and ");
+      // The remedy differs by format. A JPEG is copied on import, so importing
+      // the same photo again really does give an independent second version.
+      // A raw is edited in place, so the user has to make the copy themselves.
+      const remedy =
+        photo.kind === "jpeg"
+          ? "To grade this photo two different ways, use 📷 to import it a second time - " +
+            "CreaCon copies each import, so the two versions stay independent."
+          : "To grade this photo two different ways, duplicate the raw file on disk and " +
+            "import the copy with 📷 - a raw file holds a single set of develop settings.";
+
+      notes.push(
+        `Heads up: layers ${listed} are the same photo. Duplicating a layer doesn't ` +
+          "duplicate the photo - both point at one file, and a file has one set of develop " +
+          `settings, so any edit changes both. ${remedy}`
+      );
+    }
+  } catch (err) {
+    // A warning is a nicety; never let it stop the message being sent.
+    log("Duplicate-layer check skipped:", formatError(err));
+  }
+  return notes;
+}
+
 // The desktop app cannot export a canvas JPEG or list layers - both need the
 // document, which only exists in here. So the backend asks for them on the
 // app's behalf whenever a chat turn arrives without any.
@@ -138,6 +189,10 @@ async function sendContext(msg) {
   } catch (err) {
     error("bridge: layer context failed", err);
   }
+  // Warnings the user needs BEFORE the model plans - two layers that are
+  // secretly one photo change what a sensible edit looks like. They ride back
+  // with the context because that is the one moment per turn we are in here.
+  context.notes = await duplicateLayerNotes();
   send({ type: "context_result", id: msg.id, context });
   log(
     `bridge: sent context (${context.layer_names.length} layer(s), preview ` +
@@ -199,6 +254,46 @@ async function runOpenRaw(msg) {
   }
 }
 
+// Cache cleanup, in two halves so the confirmation can be shown in the desktop
+// settings screen. Deleting files is never automatic: survey reports what would
+// go, and nothing is removed until a separate call names the paths.
+async function runCacheSurvey(msg) {
+  try {
+    const cacheSweep = require("./executor/cacheSweep");
+    const result = await cacheSweep.survey();
+    send({
+      type: "done",
+      id: msg.id,
+      ok: true,
+      summary: cacheSweep.describe(result),
+      removable: (result.removable || []).map((f) => f.path),
+      totalCount: result.totalCount,
+    });
+  } catch (err) {
+    error("bridge: cache survey failed", err);
+    send({ type: "error", id: msg.id, message: formatError(err) });
+  }
+}
+
+async function runCacheRemove(msg) {
+  try {
+    const cacheSweep = require("./executor/cacheSweep");
+    const { removed, freedBytes, errors } = await cacheSweep.remove(msg.paths || []);
+    send({
+      type: "done",
+      id: msg.id,
+      ok: true,
+      removed: removed.length,
+      freed: cacheSweep.formatBytes(freedBytes),
+      errors: (errors || []).map((e) => e.error),
+    });
+    log(`bridge: removed ${removed.length} cached copies`);
+  } catch (err) {
+    error("bridge: cache remove failed", err);
+    send({ type: "error", id: msg.id, message: formatError(err) });
+  }
+}
+
 async function connect() {
   if (stopped) return;
 
@@ -247,6 +342,7 @@ async function connect() {
     }
     if (msg.type === "hello_ack") {
       attempt = 0; // authenticated, so the next drop retries promptly
+      connectedPort = found.port;
       log(`bridge: connected to ${url}`);
     } else if (msg.type === "apply") {
       runApply(msg);
@@ -256,11 +352,16 @@ async function connect() {
       runRestore(msg);
     } else if (msg.type === "open_raw") {
       runOpenRaw(msg);
+    } else if (msg.type === "cache_survey") {
+      runCacheSurvey(msg);
+    } else if (msg.type === "cache_remove") {
+      runCacheRemove(msg);
     }
   };
 
   socket.onclose = (event) => {
     socket = null;
+    connectedPort = null;
     log(`bridge: disconnected (code ${event && event.code}) - will retry`);
     // A backend restart closes this silently. Without the retry the plugin
     // looks perfectly healthy and simply does nothing, which is the worst
@@ -288,4 +389,10 @@ function stop() {
   socket = null;
 }
 
-module.exports = { start, stop };
+// What the panel's status light reads. Reported rather than pushed - this
+// module owns the socket, so it is the only thing that knows.
+function status() {
+  return { connected: socket !== null && connectedPort !== null, port: connectedPort };
+}
+
+module.exports = { start, stop, status };

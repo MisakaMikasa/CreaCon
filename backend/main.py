@@ -259,6 +259,7 @@ class ChatRequest(BaseModel):
 
 @app.post("/chat", dependencies=[Depends(require_token)])
 async def chat_endpoint(req: ChatRequest):
+    context_notes: List[str] = []
     # The plugin sends its own context; the desktop app cannot - exporting a
     # canvas JPEG and listing layers both need the document. So when the caller
     # supplied none, collect it from Photoshop over the bridge. That is what
@@ -270,8 +271,14 @@ async def chat_endpoint(req: ChatRequest):
             req.layer_names = ctx.get("layer_names") or []
             req.selected_layers = ctx.get("selected_layers") or []
             req.camera_raw = ctx.get("camera_raw")
-            logger.info("collected context from the plugin: %d layer(s), preview %s",
-                        len(req.layer_names), "yes" if req.image_base64 else "no")
+            # Warnings the plugin raised while collecting context - e.g. two
+            # layers that are secretly one photo. They must reach the MODEL
+            # before it plans, not just the user afterwards, so they go in as a
+            # [note] turn exactly as the panel used to do.
+            context_notes = ctx.get("notes") or []
+            logger.info("collected context from the plugin: %d layer(s), preview %s, %d note(s)",
+                        len(req.layer_names), "yes" if req.image_base64 else "no",
+                        len(context_notes))
         except Exception as exc:
             # A text-only turn is degraded but useful; a failed turn is not.
             logger.warning("could not collect context from the plugin: %s", exc)
@@ -287,6 +294,13 @@ async def chat_endpoint(req: ChatRequest):
     logger.info("chat: %d messages, layer context: %s", len(req.messages), context)
 
     conversation = [{"role": m.role, "content": m.content} for m in req.messages]
+
+    # Context warnings go in BEFORE the model plans, not just to the user
+    # afterwards. Two layers that are secretly one photo change what a sensible
+    # edit looks like - the panel pushed these into the conversation for exactly
+    # this reason, and collecting context server-side must not lose it.
+    for note in context_notes:
+        conversation.append({"role": "user", "content": f"[note] {note}"})
 
     # Draw the labeled 0..1 coordinate grid onto the preview so the model can
     # read mask coordinates off anchors instead of guessing (see image_annotate).
@@ -333,7 +347,12 @@ async def chat_endpoint(req: ChatRequest):
     # the thumbnails are of the photo, not of our coordinate overlay.
     previews = _geometry_previews(plan, req.image_base64)
 
-    return {"reply": display, "edit_plan": plan, "geometry_previews": previews}
+    return {
+        "reply": display,
+        "edit_plan": plan,
+        "geometry_previews": previews,
+        "context_notes": context_notes,
+    }
 
 
 def _geometry_previews(plan, image_base64):
@@ -502,6 +521,32 @@ async def open_raw():
     if result.get("type") == "error":
         raise HTTPException(422, result.get("message", "import failed"))
     return result
+
+
+class CacheRemoveRequest(BaseModel):
+    paths: List[str]
+
+
+@app.post("/cache/survey", dependencies=[Depends(require_token)])
+async def cache_survey():
+    if not bridge.connected():
+        raise HTTPException(503, "Photoshop plugin is not connected")
+    try:
+        return await bridge.cache_survey()
+    except (asyncio.TimeoutError, ConnectionError) as exc:
+        raise HTTPException(503, str(exc) or "the plugin did not answer")
+
+
+@app.post("/cache/remove", dependencies=[Depends(require_token)])
+async def cache_remove(req: CacheRemoveRequest):
+    """Deletes working copies. Only ever called after the user confirmed a
+    survey, and only with paths that survey returned."""
+    if not bridge.connected():
+        raise HTTPException(503, "Photoshop plugin is not connected")
+    try:
+        return await bridge.cache_remove(req.paths)
+    except (asyncio.TimeoutError, ConnectionError) as exc:
+        raise HTTPException(503, str(exc) or "the plugin did not answer")
 
 
 @app.get("/")

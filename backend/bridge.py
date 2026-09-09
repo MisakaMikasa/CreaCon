@@ -144,6 +144,15 @@ class Bridge:
         keep-or-fresh dialog, both of which sit until a human answers."""
         return await self.request("open_raw", {}, timeout)
 
+    async def cache_survey(self, timeout: float = CONTEXT_TIMEOUT) -> dict:
+        """What the cleanup WOULD remove. Nothing is deleted by this call."""
+        return await self.request("cache_survey", {}, timeout)
+
+    async def cache_remove(self, paths, timeout: float = CONTEXT_TIMEOUT) -> dict:
+        """Delete the named working copies. Separate from the survey on purpose:
+        the confirmation happens between the two, in the desktop settings."""
+        return await self.request("cache_remove", {"paths": list(paths)}, timeout)
+
     def resolve(self, msg: dict) -> None:
         """Fill the box a parked apply() is waiting on."""
         future = self._pending.pop(msg.get("id", ""), None)

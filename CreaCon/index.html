@@ -5,18 +5,14 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="chat">
-    <div id="messages"></div>
-    <div id="inputRow">
-      <sp-textarea id="chatInput" placeholder="Ask for edits, or describe the look you want…"></sp-textarea>
-      <sp-button id="btnSend" variant="cta">Send</sp-button>
-      <sp-button id="btnOpenRaw" variant="secondary" title="Open a RAW or JPEG photo for AI develop editing">📷</sp-button>
-      <sp-button id="btnCleanCache" variant="secondary" title="Clean up cached photo copies CreaCon no longer needs">🧹</sp-button>
-      <!-- Dev tools are unwired; their questions are answered and the files are kept
-           as the record of how (src/spike/jpegAcrSpike.js, src/spike/linkPathProbe.js).
-           Re-wire linkPathProbe when working on the registry - it reports what file
-           Photoshop says is behind each layer vs what the registry claims. -->
-    </div>
+  <!-- A status light, deliberately. The interface is CreaCon.exe; this panel
+       only reports whether Photoshop is reachable from it. Anything added here
+       is something every user has to reinstall the plugin for. -->
+  <div id="panel">
+    <div id="status"><span id="dot" class="dot bad"></span><span id="statusText">Connecting…</span></div>
+    <p class="hint">
+      Open the CreaCon app to edit. This plugin runs the edits it sends.
+    </p>
   </div>
 </body>
 </html>
