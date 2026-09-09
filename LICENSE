@@ -1,0 +1,47 @@
+CreaCon License
+Copyright (c) 2026 Sharlock Qiao. All rights reserved.
+
+This software is source-available, not open source. The source is published so
+it can be read, run, and learned from - not taken.
+
+WHAT YOU MAY DO
+
+1. Use. You may run this software for any purpose, personal or commercial,
+   free of charge.
+
+2. Copy it in order to run it. You may clone this repository, install its
+   dependencies, and build it, because that is what running it requires. You
+   may keep those copies for your own use.
+
+3. Read it. You may study the source and the documentation, and you may quote
+   short excerpts with attribution - in a review, an article, or a discussion.
+
+WHAT YOU MAY NOT DO
+
+4. Modify. You may not alter, adapt, translate, or build derivative works from
+   this software, in whole or in part. Configuration - your API key, your
+   settings - is not a modification.
+
+5. Redistribute. You may not publish, share, sublicense, sell, rent, or
+   otherwise make this software or any substantial part of it available to
+   anyone else, modified or not. Point people at the original instead.
+
+6. Remove this notice. It travels with any copy you are permitted to hold.
+
+THIRD-PARTY COMPONENTS
+
+This software depends on, and its packaged builds may include, third-party
+libraries under their own licenses. Those terms govern those components, not
+this one. Their notices are reproduced in the distribution where required.
+
+NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+CreaCon edits your photographs and writes to files on your disk, including
+Camera Raw sidecar files beside your originals. Keep backups.
