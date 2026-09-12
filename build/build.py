@@ -107,7 +107,20 @@ def installer(v):
                 "Leave it anywhere under CreaCon/ or build/, then run this again.",
             ])
         )
-    print(f"plugin: {ccx.name}")
+    # The .ccx carries its own copy of manifest.json, frozen at whatever the
+    # version was when UXP Developer Tools packaged it. Bumping the repo does
+    # not update it, so without this check a 0.7.0 installer happily ships a
+    # 0.6.4 plugin and nothing says so.
+    import zipfile
+
+    with zipfile.ZipFile(ccx) as z:
+        plugin_v = json.loads(z.read("manifest.json"))["version"]
+    if plugin_v != v:
+        sys.exit(
+            f"{ccx.name} contains plugin version {plugin_v}, but this build is {v}."
+            " Re-export it: UXP Developer Tools -> ... -> Package."
+        )
+    print(f"plugin: {ccx.name} (v{plugin_v})")
     # installer.iss expects one fixed name, but UXP Developer Tools names the
     # file after the plugin and writes it beside the manifest - so copy it
     # rather than making the user move it after every repackage.
@@ -126,8 +139,18 @@ def installer(v):
     print(f"using {iscc}")
     subprocess.run([str(iscc), f"/DAppVersion={v}", str(BUILD / "installer.iss")], check=True)
     out = DIST / f"CreaCon-{v}-setup.exe"
-    if out.exists():
-        print(f"\n{out}  ({out.stat().st_size / 1024 / 1024:.0f} MB)")
+    if not out.exists():
+        # Inno reported success but produced nothing at the expected name.
+        # That happened once: a hardcoded #define AppVersion overrode the /D
+        # on the command line, so the installer was built and named after the
+        # wrong version while this check quietly passed.
+        built = sorted(f.name for f in DIST.glob("CreaCon-*-setup.exe"))
+        sys.exit(
+            f"Expected {out.name}, which was not produced. "
+            + (f"Found instead: {built}" if built else "Nothing was built.")
+        )
+    print()
+    print(f"{out}  ({out.stat().st_size / 1024 / 1024:.0f} MB)")
 
 
 def main():

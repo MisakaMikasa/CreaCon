@@ -10,7 +10,12 @@
 ;   3. make sure WebView2 exists, since the window is nothing without it
 
 #define AppName     "CreaCon"
-#define AppVersion  "0.6.3"
+; build.py passes /DAppVersion=<version from manifest.json>. A bare #define
+; here would override it - Inno applies /D first, then the script - so this
+; is only a fallback for compiling the .iss by hand.
+#ifndef AppVersion
+  #define AppVersion "0.0.0-dev"
+#endif
 #define AppExe      "CreaCon.exe"
 #define Publisher   "Yu Qiao"
 
@@ -20,6 +25,7 @@
 AppId={{8F3A7C21-5E4D-4B6A-9C18-CREACON00001}
 AppName={#AppName}
 AppVersion={#AppVersion}
+AppVerName={#AppName} {#AppVersion} Early Access
 AppPublisher={#Publisher}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
