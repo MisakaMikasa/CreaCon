@@ -13,5 +13,5 @@ node_modules/
 dist/
 build/work/
 build/THIRD-PARTY-NOTICES.txt
-build/*.ccx
+*.ccx
 *.spec.bak

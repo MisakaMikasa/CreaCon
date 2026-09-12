@@ -12,9 +12,9 @@
 #define AppName     "CreaCon"
 #define AppVersion  "0.6.3"
 #define AppExe      "CreaCon.exe"
-#define Publisher   "Sharlock Qiao"
+#define Publisher   "Yu Qiao"
 
-#define UPIA "{cf}\Adobe\Adobe Desktop Common\RemoteComponents\UPI\UnifiedPluginInstallerAgent\UnifiedPluginInstallerAgent.exe"
+#define UPIA "{commoncf}\Adobe\Adobe Desktop Common\RemoteComponents\UPI\UnifiedPluginInstallerAgent\UnifiedPluginInstallerAgent.exe"
 
 [Setup]
 AppId={{8F3A7C21-5E4D-4B6A-9C18-CREACON00001}
@@ -70,9 +70,9 @@ Filename: "{app}\{#AppExe}"; Description: "Start CreaCon"; \
 
 [UninstallRun]
 ; Best effort: if Creative Cloud has been removed first, UPIA is gone and there
-; is nothing to unregister. runasoriginaluser because plugins install per-user.
+; is nothing to unregister. No runasoriginaluser here - it is a [Run]-only flag
 Filename: "{#UPIA}"; Parameters: "/remove ""CreaCon"""; \
-  Flags: runhidden skipifdoesntexist runasoriginaluser; RunOnceId: "RemovePlugin"
+  Flags: runhidden skipifdoesntexist; RunOnceId: "RemovePlugin"
 
 [Code]
 function UpiaPresent: Boolean;

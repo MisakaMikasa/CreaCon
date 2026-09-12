@@ -83,16 +83,37 @@ def freeze():
     print(f"built {app}  ({size / 1024 / 1024:.0f} MB)")
 
 
+def find_ccx():
+    """The packaged plugin, wherever UXP Developer Tools left it.
+
+    UDT writes <PluginName>_PS.ccx next to the manifest rather than taking a
+    path, so looking only in build/ finds nothing even when the file exists.
+    Newest wins, so repackaging just works.
+    """
+    found = list(BUILD.glob("*.ccx")) + list((ROOT / "CreaCon").glob("*.ccx"))
+    return max(found, key=lambda f: f.stat().st_mtime) if found else None
+
+
 def installer(v):
     say("installer")
-    ccx = BUILD / "CreaCon.ccx"
-    if not ccx.exists():
+    ccx = find_ccx()
+    if ccx is None:
         sys.exit(
-            f"No plugin package at {ccx}\n\n"
-            "The .ccx cannot be produced from the command line - it comes out of\n"
-            "UXP Developer Tools: load CreaCon/manifest.json, then Actions -> Package.\n"
-            "Save the result as build/CreaCon.ccx and run this again."
+            chr(10).join([
+                "No plugin package (.ccx) found.",
+                "",
+                "It comes out of UXP Developer Tools, not the command line:",
+                "load CreaCon/manifest.json, then the ... menu -> Package.",
+                "Leave it anywhere under CreaCon/ or build/, then run this again.",
+            ])
         )
+    print(f"plugin: {ccx.name}")
+    # installer.iss expects one fixed name, but UXP Developer Tools names the
+    # file after the plugin and writes it beside the manifest - so copy it
+    # rather than making the user move it after every repackage.
+    staged = BUILD / "CreaCon.ccx"
+    if ccx.resolve() != staged.resolve():
+        shutil.copy2(ccx, staged)
 
     iscc = find_iscc()
     if iscc is None:
