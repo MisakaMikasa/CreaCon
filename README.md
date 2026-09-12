@@ -235,6 +235,47 @@ file. That is also why the sidecar preference above is not optional.
 
 ---
 
+## Running from source
+
+You do not need the installer. The licence allows cloning, building and
+changing CreaCon for your own use &mdash; what it does not allow is
+redistributing it or building a commercial product from it.
+
+You still need **Photoshop 27.8+**, the two Camera Raw preferences above, and
+your own Gemini key.
+
+### The app
+
+```
+git clone https://github.com/MisakaMikasa/CreaCon.git
+cd CreaCon/backend
+
+python -m venv .venv
+.venv\Scripts\activate            # Windows; source .venv/bin/activate elsewhere
+pip install -r requirements.txt
+
+copy .env.example .env             # then put your Gemini key in it
+python app.py
+```
+
+`python app.py` opens the desktop window. `python main.py` runs the backend
+headless without a window, which is useful when you only want the API.
+
+Settings resolve in this order: `%APPDATA%\CreaCon\config.json` &rarr; environment
+&rarr; `backend/.env`. From source you will normally use the `.env`; an installed
+build has none and uses `config.json`, which its settings screen writes.
+
+### The plugin
+
+Load it through **UXP Developer Tools** (free, from Creative Cloud):
+*Add Plugin* &rarr; select `CreaCon/manifest.json` &rarr; *Load*.
+
+The plugin finds the app by itself &mdash; it tries ports 8000 and 8731&ndash;8735
+and connects to whichever answers, so nothing needs configuring. Watch the app's
+status light to confirm.
+
+---
+
 ## License
 
 Source-available, not open source. Read it, run it, tinker with it — use
