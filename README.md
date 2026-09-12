@@ -1,21 +1,56 @@
-<img src="assets/icon-512.png" width="96" align="left" alt="">
+<img src="assets/icon-512.png" width="110" align="left" alt="">
 
 # CreaCon
 
-**Edit photos in Photoshop by describing what you want.**
+### Your AI copilot for photo editing.
+
+**Lives inside Photoshop. Edits like a human photographer, not an image generator.**
 
 <br clear="left">
 
-You type *"warmer and more cinematic, but keep it natural"*. CreaCon looks at your
-photo, plans the edit, shows you the steps, and — once you approve — performs them
-as **real Camera Raw develop settings and real adjustment layers**.
+Tell it what you want, in your own words:
 
-Nothing is generated. Nothing is flattened. Every edit it makes is one you could
-have made yourself, and you can adjust or undo any of it afterwards in the panels
-you already know.
+> *"make this photo look better"*
+> *"emphasize the skyscraper"*
+> *"imitate the vibe of Fuji Classic Negative"*
+> *"propose a better composition"*
+> *"recover the highlights and warm it up"*
+> *"darken just the sky"*
 
-<!-- TODO: drag an MP4 into GitHub's README editor and paste the
-     user-attachments URL here. ~30s: type a request, plan card, layers appear. -->
+CreaCon looks at your photo, works out what that means, and shows you a plan.
+You click Apply, and it performs the edit **as real Camera Raw develop settings
+and real adjustment layers** — the same moves you would have made by hand.
+
+**Nothing is generated. Nothing is flattened.** Every slider it touches is one
+you can find afterwards and change. Your photo stays yours; CreaCon just knows
+where the controls are.
+
+## See it work
+
+<!-- INLINE PLAYER: drag each MP4 into GitHub's README editor (or into any
+     issue) and paste the resulting user-attachments URL on its own line here.
+     GitHub renders those as a real player; it strips YouTube iframes. -->
+
+[![Demonstration 1](https://img.youtube.com/vi/CujDVSj0CaY/maxresdefault.jpg)](https://www.youtube.com/watch?v=CujDVSj0CaY)
+
+[![Demonstration 2](https://img.youtube.com/vi/UTCQHWtEFmQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=UTCQHWtEFmQ)
+
+## Why it is different
+
+Most AI photo tools **generate a new image**. You get a picture back and no way
+into it — you cannot nudge one thing, and you cannot tell what it changed.
+
+CreaCon **operates the software instead.** It writes develop settings and builds
+adjustment layers, so:
+
+- **Everything stays editable.** Every edit lands in Camera Raw or the Layers
+  panel where you can adjust or delete it.
+- **Nothing is destroyed.** Your original file is never overwritten.
+- **You approve before anything happens.** It proposes a plan; you decide.
+- **You can keep talking.** *"stronger"*, *"other side"*, *"make that gentler"* —
+  it knows what it just did.
+
+It is a copilot, not an autopilot. It does the fiddly part; you keep the taste.
 
 ---
 
@@ -23,9 +58,9 @@ you already know.
 
 **Develop a photo** — RAW or JPEG, through Camera Raw:
 
-> *"recover the highlights and warm it up"*
 > *"give me a faded film look"*
 > *"the sky is too pale — deepen the blues"*
+> *"push the greens toward teal, but keep skin natural"*
 
 Exposure, contrast, true Kelvin white balance, highlight and shadow recovery,
 texture, clarity, dehaze, the full HSL colour mixer, split-tone colour grading,
@@ -33,9 +68,9 @@ sharpening, noise reduction, grain and vignette.
 
 **Edit part of a photo** — it works out the masks itself:
 
-> *"darken just the sky"*
 > *"brighten her face a little"*
 > *"warm the left third of the frame"*
+> *"lift the shadows on the building, not the sky"*
 
 Sky, subject and person selection, plus linear and radial gradients — each
 carrying its own develop settings.
@@ -46,12 +81,8 @@ carrying its own develop settings.
 > *"fix the converging verticals"*
 > *"crop this tighter"*
 
-It measures what a straighten costs before doing it, and says so: *"straightening
-2 degrees, which trims about 10% of the frame."* On open-ended requests it offers
-crop options as thumbnails rather than deciding for you.
-
-**Work on ordinary layers** too — adjustment layers, masks, blend modes and groups
-on any PSD.
+On open-ended requests it offers crop options as thumbnails rather than deciding
+for you.
 
 **Then refine.** It knows what it just did, so *"stronger"*, *"other side"*,
 *"make that gentler"* all work as follow-ups.
@@ -193,9 +224,11 @@ file. That is also why the sidecar preference above is not optional.
 
 ## License
 
-Source-available, not open source. You may **use** CreaCon freely, for anything,
-including commercially. You may not modify or redistribute it. See
-[LICENSE](LICENSE).
+Source-available, not open source. Read it, run it, tinker with it — use
+CreaCon for anything, personal or commercial, and change it for yourself.
+
+What you may not do is build a commercial product from it or redistribute it,
+modified or not. Share the link, not the code. See [LICENSE](LICENSE).
 
 The source is here to be read and run — the comments explain *why* each mechanism
 is shaped the way it is, which is most of the value.

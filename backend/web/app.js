@@ -605,10 +605,18 @@ async function refreshStatus() {
 
 // ----------------------------------------------------------------- settings
 
+// Chat, settings and help are three mutually exclusive views of the same
+// window. Switching by name rather than toggling each panel independently is
+// what stops two of them being open at once.
+function showPanel(which) {
+  el("messages").hidden = which !== "chat";
+  el("inputRow").hidden = which !== "chat";
+  el("settings").hidden = which !== "settings";
+  el("help").hidden = which !== "help";
+}
+
 async function showSettings(show) {
-  el("settings").hidden = !show;
-  el("messages").hidden = show;
-  el("inputRow").hidden = show;
+  showPanel(show ? "settings" : "chat");
   if (!show) return;
 
   el("settingsMsg").textContent = "";
@@ -749,6 +757,8 @@ async function onCacheClean() {
 function setup() {
   el("messages").addEventListener("click", onMessagesClick);
   el("btnSettings").addEventListener("click", () => showSettings(true));
+  el("btnHelp").addEventListener("click", () => showPanel("help"));
+  el("btnCloseHelp").addEventListener("click", () => showPanel("chat"));
   el("btnCloseSettings").addEventListener("click", () => showSettings(false));
   el("btnSend").addEventListener("click", onSend);
   el("btnOpenRaw").addEventListener("click", onOpenRaw);
