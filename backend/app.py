@@ -22,6 +22,7 @@ server is simply the half that is free to move.
 
 import logging
 import os
+import sys
 import threading
 import time
 import urllib.error
@@ -31,11 +32,13 @@ import uvicorn
 import webview
 
 import main
+from paths import resource, userdata
 
 logger = logging.getLogger("creacon.app")
 
 WINDOW_TITLE = "CreaCon"
 WINDOW_SIZE = (460, 760)  # portrait, roughly the proportions of the PS panel
+ICON_PATH = resource("assets", "creacon.ico")
 
 
 def _serve(port: int) -> None:
@@ -62,7 +65,31 @@ def _wait_until_up(port: int, timeout: float = 20.0) -> bool:
     return False
 
 
+def _claim_taskbar_identity() -> None:
+    """Tell Windows this process is CreaCon, not whatever launched it.
+
+    Windows picks a taskbar button's icon from the process's AppUserModelID,
+    NOT from the window. python.exe is a shell-registered application with its
+    own identity, so in development the taskbar shows Python's icon however
+    correct the window's own icon is - which is exactly what it did.
+
+    It matters for the shipped build too: without an explicit ID, Windows
+    derives one from the executable path, and pinning to the taskbar then
+    behaves inconsistently. Must run before any window exists.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Qiao.CreaCon.App")
+    except Exception as exc:
+        # Cosmetic. Never worth failing a launch over.
+        logger.debug("could not set the AppUserModelID: %s", exc)
+
+
 def run() -> None:
+    _claim_taskbar_identity()
     port = main.choose_port()
 
     # daemon=True is what stops a zombie process. A normal thread keeps the
@@ -75,12 +102,26 @@ def run() -> None:
         raise SystemExit(f"backend did not come up on port {port} - nothing to show")
 
     logger.info("CreaCon %s ready on http://127.0.0.1:%d", main.VERSION, port)
-    webview.create_window(
+    window = webview.create_window(
         WINDOW_TITLE,
         f"http://127.0.0.1:{port}/",
         width=WINDOW_SIZE[0],
         height=WINDOW_SIZE[1],
     )
+
+    # Three separate icon slots, and they are easy to confuse:
+    #
+    #   1. The taskbar / title-bar icon of a SHIPPED build comes from the .exe
+    #      itself - the icon= line in the PyInstaller spec. Nothing set at
+    #      runtime can override it, and running `python app.py` therefore shows
+    #      Python's icon however hard we try.
+    #   2. webview.start(icon=...) below. Documented for the GTK and Qt
+    #      backends; on Windows/EdgeChromium it may be ignored, in which case
+    #      slot 1 is the only one that matters. Passing it costs nothing.
+    #   3. The page's <link rel="icon">, served at /favicon.ico. This one has
+    #      NOWHERE to appear in a pywebview window - there is no tab strip. It
+    #      exists for when the page is opened in a real browser, which is a
+    #      genuinely useful way to debug the UI.
     # debug=True turns on the WebView2 devtools (right-click -> Inspect, or F12).
     # Without it the page's console is unreachable, which makes a UI bug in here
     # far harder to diagnose than the same bug in the UXP panel, where Adobe's
@@ -89,9 +130,34 @@ def run() -> None:
     debug = os.environ.get("CREACON_DEBUG", "") not in ("", "0")
     if debug:
         logger.info("devtools enabled (CREACON_DEBUG) - right-click the window to inspect")
-    webview.start(debug=debug)  # returns only when the user closes the window
+    webview.start(debug=debug, icon=str(ICON_PATH) if ICON_PATH.exists() else None)
+
+
+def _setup_logging() -> None:
+    """Log to a file as well as the console.
+
+    A shipped build has no console at all, so without this a crash before the
+    window opens leaves nothing behind and the app simply fails to appear. The
+    file is the only evidence a user could ever send.
+    """
+    handlers = [logging.StreamHandler()]
+    try:
+        handlers.append(logging.FileHandler(userdata("creacon.log"), encoding="utf-8"))
+    except Exception:
+        pass  # a missing log is not a reason to refuse to start
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=handlers,
+    )
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    run()
+    _setup_logging()
+    try:
+        run()
+    except Exception:
+        # Without a console this is the only place a startup failure is
+        # recorded. Logged before re-raising so the traceback reaches the file.
+        logging.getLogger("creacon.app").exception("CreaCon failed to start")
+        raise

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CreaCon</title>
+<link rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -18,6 +19,7 @@
     <span id="statusDot"></span>
     <span id="statusText">connecting…</span>
     <span class="spacer"></span>
+    <button id="btnHelp" title="Setup and help">?</button>
     <button id="btnSettings" title="Settings">⚙</button>
   </div>
 
@@ -57,6 +59,103 @@
         <button id="btnCacheCheck">Check</button>
         <button id="btnCacheClean" hidden>Delete them</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Setup instructions, in the app. Someone who installed from the installer
+       has never seen the README, and two of these settings are ones CreaCon
+       cannot work without - so they have to be reachable from inside. -->
+  <div id="help" hidden>
+    <h2>Setup &amp; help</h2>
+
+    <div class="help-block">
+      <h3>1. Add your own API key</h3>
+      <p>CreaCon uses <b>your</b> Google Gemini key, not a shared one. It is free
+         to get, it stays on this machine, and it is sent only to Google when you
+         ask for an edit.</p>
+      <ol>
+        <li>Get a key at <b>aistudio.google.com/apikey</b>.</li>
+        <li>Open <b>Settings</b> (the gear, top right), paste it in, and
+            <b>Save</b>.</li>
+        <li><b>Restart CreaCon</b> &mdash; the key is read when the app starts.</li>
+      </ol>
+      <p>Without a key every request fails. That is the first thing to check if
+         nothing happens when you send a message.</p>
+    </div>
+
+    <div class="help-block">
+      <h3>2. Camera Raw settings CreaCon needs</h3>
+      <p>Open Camera Raw (double-click any raw photo), click the <b>gear icon</b>,
+         then <b>File Handling</b>.</p>
+      <dl>
+        <dt>Save image settings in &rarr; <b>Sidecar ".xmp" files</b></dt>
+        <dd><b>Required.</b> Otherwise Camera Raw keeps your develop settings in
+            its own database, where CreaCon can neither read nor write them.
+            Nothing will work without this.</dd>
+        <dt>JPEG/HEIC &rarr; <b>Automatically open all supported JPEGs</b></dt>
+        <dd>Only needed if you want to edit JPEGs. Without it Photoshop opens
+            them directly and skips Camera Raw entirely.</dd>
+      </dl>
+    </div>
+
+    <div class="help-block">
+      <h3>3. Using it</h3>
+      <ol>
+        <li><b>Open a photo with the &#128247; button.</b> That is how CreaCon
+            places it so it can be develop-edited later &mdash; a photo you
+            opened yourself cannot be.</li>
+        <li><b>Type what you want.</b></li>
+        <li><b>Read the plan, then click Apply.</b> Nothing touches your document
+            until you do.</li>
+        <li><b>Keep going.</b> Refine, or restore an earlier state from its
+            card.</li>
+      </ol>
+      <p><b>Photoshop freezes while an edit applies.</b> That is Photoshop, not a
+         crash &mdash; it blocks its own interface while a script runs. This
+         window stays responsive throughout.</p>
+    </div>
+
+    <div class="help-block">
+      <h3>If the Photoshop panel is missing, or the status light stays red</h3>
+      <p>CreaCon is two pieces: this app, and a Photoshop plugin that performs
+         the edits. The status light above says whether the plugin is connected.
+         If it is red while Photoshop is open, the plugin is not connected.</p>
+      <p>Install it by hand: double-click <b>CreaCon.ccx</b> in CreaCon's
+         install folder, beside CreaCon.exe, and accept Adobe's prompt. Adobe
+         warns that it is not verified by them &mdash; that appears for every
+         plugin outside their own marketplace. Installing plugins needs the
+         Creative Cloud desktop app.</p>
+    </div>
+
+    <div class="help-block">
+      <h3>If colours look wrong on the canvas</h3>
+      <p>On <b>Photoshop 27.10</b> the canvas can render more saturated than the
+         Camera Raw dialog showing the same photo. <b>That is a Photoshop bug,
+         not CreaCon.</b> Camera Raw is the correct one, and files you save or
+         export are unaffected.</p>
+      <p>Fix: <b>Ctrl+K &rarr; Performance &rarr; untick "Use Graphics
+         Processor"</b>, then restart Photoshop. 27.9.1 is unaffected; try
+         turning it back on once 27.11 ships.</p>
+    </div>
+
+    <div class="help-block">
+      <h3>Things that surprise people</h3>
+      <dl>
+        <dt>An AI mask did nothing</dt>
+        <dd>Camera Raw loads the settings but does not always run the selection.
+            Double-click the layer to open it in Camera Raw and click
+            <b>"Update AI settings"</b> once. Gradient masks never need this.</dd>
+        <dt>Ctrl+Z did not undo a develop edit</dt>
+        <dd>Those live in a sidecar file beside your photo, which Photoshop's undo
+            cannot reach. Use <b>"Restore to before this"</b> on the edit's card
+            instead.</dd>
+        <dt>Editing one layer changed another</dt>
+        <dd>They are the same photo. A file holds one set of develop settings, so
+            duplicated photo layers are locked together.</dd>
+      </dl>
+    </div>
+    <div class="plan-actions">
+      <button id="btnCloseHelp">Back to chat</button>
     </div>
   </div>
 

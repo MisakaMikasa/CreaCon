@@ -27,7 +27,11 @@ from validator import validate_edit_plan
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("creacon")
 
-VERSION = "0.6.1"
+VERSION = "0.7.0"
+# Shown wherever a human reads it. The version string itself stays numeric:
+# Adobe's manifest expects major.minor.patch and a suffix risks rejection
+# at packaging time.
+RELEASE_LABEL = "Early Access"
 
 # Feature toggles (env). GRID_OVERLAY draws the coordinate ruler on previews
 # (default on; set 0 to A/B against the un-gridded baseline). VERIFY_MASKS runs
@@ -113,6 +117,7 @@ def ping():
     return {
         "app": "creacon",
         "version": VERSION,
+        "release_label": RELEASE_LABEL,
         "token": TOKEN,
         "plugin_connected": bridge.connected(),
     }
@@ -547,6 +552,11 @@ async def cache_remove(req: CacheRemoveRequest):
         return await bridge.cache_remove(req.paths)
     except (asyncio.TimeoutError, ConnectionError) as exc:
         raise HTTPException(503, str(exc) or "the plugin did not answer")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(resource("assets", "creacon.ico"))
 
 
 @app.get("/")

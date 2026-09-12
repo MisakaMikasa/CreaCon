@@ -1,6 +1,6 @@
 {
   "name": "creacon",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "CreaCon - AI photo-editing agent inside Adobe Photoshop (UXP panel).",
   "license": "Apache-2.0"
 }

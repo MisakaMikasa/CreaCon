@@ -1,0 +1,49 @@
+CreaCon License
+Copyright (c) 2026 Yu Qiao. All rights reserved.
+
+Source-available, not open source. Read it, run it, tinker with it. Don't sell
+it or pass it off as yours.
+
+These terms cover the version they ship with. Later versions may be released
+under different terms.
+
+
+YOU MAY
+
+  Use it. For anything, personal or commercial.
+
+  Copy it to run it. Cloning, installing dependencies and building are what
+  running it requires.
+
+  Change it for yourself. Modify it, experiment, fix things, learn from it.
+
+
+YOU MAY NOT
+
+  Build a commercial product from it. You may not sell, license, or
+  commercially distribute this software or anything derived from it, modified
+  or not.
+
+  Redistribute it. Share the link, not the code. That goes for modified copies
+  too.
+
+  Remove this notice. It stays with any copy you hold.
+
+
+THIRD-PARTY COMPONENTS
+
+CreaCon depends on, and its packaged builds include, third-party libraries under
+their own licenses. Those terms govern those components. Their notices ship with
+the distribution.
+
+
+NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR
+ITS USE.
+
+CreaCon edits your photographs and writes to files on your disk, including
+Camera Raw sidecar files beside your originals. Keep backups.

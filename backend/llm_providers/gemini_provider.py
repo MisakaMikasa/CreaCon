@@ -14,7 +14,11 @@ from prompt import (
     build_user_message,
 )
 
-MODEL = config.get("gemini_model", "gemini-2.5-flash")
+# The DEFAULT matters more than it looks: an installed user has no .env, so
+# this is the model they actually get. 2.5-flash was the default until
+# 2026-09-11 and Google retires it no earlier than 2026-10-16 - shipping it
+# would have meant an installer that stopped working within weeks.
+MODEL = config.get("gemini_model", "gemini-3.8-flash")
 # A small positive budget keeps Gemini snappy for chat; 0 disables thinking.
 THINKING_BUDGET = int(os.environ.get("GEMINI_THINKING_BUDGET", "512"))
 

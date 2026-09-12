@@ -92,6 +92,69 @@ function previewImage(holder, alt) {
   return holder._imgNode;
 }
 
+// Models write markdown whether or not you ask them to, and the panel rendered
+// replies with textContent - so "**warmer**" arrived on screen as literal
+// asterisks. This renders the small subset that actually turns up in a chat
+// reply: **bold**, *italic*, `code`, and "- " bullets.
+//
+// It builds real DOM NODES rather than assigning innerHTML. That is the whole
+// safety argument: model output is not trusted input - it echoes back text the
+// user typed, and a model can be talked into emitting markup - and text that is
+// never parsed as HTML cannot become HTML. No sanitiser to get wrong, and no
+// library to ship.
+const INLINE = /(\*\*[^*]+\*\*|\*[^*\n]+\*|`[^`\n]+`)/g;
+
+function renderInline(target, text) {
+  for (const piece of text.split(INLINE)) {
+    if (!piece) continue;
+    if (piece.startsWith("**") && piece.endsWith("**") && piece.length > 4) {
+      const b = document.createElement("strong");
+      b.textContent = piece.slice(2, -2);
+      target.appendChild(b);
+    } else if (piece.startsWith("`") && piece.endsWith("`") && piece.length > 2) {
+      const c = document.createElement("code");
+      c.textContent = piece.slice(1, -1);
+      target.appendChild(c);
+    } else if (piece.startsWith("*") && piece.endsWith("*") && piece.length > 2) {
+      const i = document.createElement("em");
+      i.textContent = piece.slice(1, -1);
+      target.appendChild(i);
+    } else {
+      target.appendChild(document.createTextNode(piece));
+    }
+  }
+}
+
+// Block level: consecutive "- " lines become one list, everything else is a
+// line of text. Deliberately no headings, tables or links - a chat reply that
+// wants those is a reply that is too long.
+function renderMarkdown(target, text) {
+  const lines = String(text == null ? "" : text).split("\n");
+  let list = null;
+
+  for (const line of lines) {
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (bullet) {
+      if (!list) {
+        list = document.createElement("ul");
+        target.appendChild(list);
+      }
+      const li = document.createElement("li");
+      renderInline(li, bullet[1]);
+      list.appendChild(li);
+      continue;
+    }
+    list = null;
+    if (line.trim() === "") {
+      target.appendChild(document.createElement("br"));
+      continue;
+    }
+    const p = document.createElement("div");
+    renderInline(p, line);
+    target.appendChild(p);
+  }
+}
+
 function button(label, { cta = false, disabled = false } = {}) {
   const b = document.createElement("button");
   b.textContent = label;
@@ -248,7 +311,12 @@ function render() {
       thinkingBubble = bubble;
     } else {
       bubble.className = `bubble bubble-${msg.role}`;
-      bubble.textContent = msg.text;
+      if (msg.role === "assistant") {
+        renderMarkdown(bubble, msg.text);
+      } else {
+        // The user's own words, and error text, appear exactly as written.
+        bubble.textContent = msg.text;
+      }
     }
     row.appendChild(bubble);
     container.appendChild(row);
@@ -537,10 +605,18 @@ async function refreshStatus() {
 
 // ----------------------------------------------------------------- settings
 
+// Chat, settings and help are three mutually exclusive views of the same
+// window. Switching by name rather than toggling each panel independently is
+// what stops two of them being open at once.
+function showPanel(which) {
+  el("messages").hidden = which !== "chat";
+  el("inputRow").hidden = which !== "chat";
+  el("settings").hidden = which !== "settings";
+  el("help").hidden = which !== "help";
+}
+
 async function showSettings(show) {
-  el("settings").hidden = !show;
-  el("messages").hidden = show;
-  el("inputRow").hidden = show;
+  showPanel(show ? "settings" : "chat");
   if (!show) return;
 
   el("settingsMsg").textContent = "";
@@ -681,6 +757,8 @@ async function onCacheClean() {
 function setup() {
   el("messages").addEventListener("click", onMessagesClick);
   el("btnSettings").addEventListener("click", () => showSettings(true));
+  el("btnHelp").addEventListener("click", () => showPanel("help"));
+  el("btnCloseHelp").addEventListener("click", () => showPanel("chat"));
   el("btnCloseSettings").addEventListener("click", () => showSettings(false));
   el("btnSend").addEventListener("click", onSend);
   el("btnOpenRaw").addEventListener("click", onOpenRaw);

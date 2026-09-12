@@ -7,7 +7,10 @@ import config
 # environment -> backend/.env, and calls load_dotenv() itself. It must come
 # before the provider modules, which read their key and model at import time.
 
-PROVIDER = str(config.get("llm_provider", "anthropic")).lower()
+# Gemini, matching /settings, the settings screen and the README. An
+# installed user has no config and no .env, so this default is what they
+# actually get - and they will have entered a Gemini key.
+PROVIDER = str(config.get("llm_provider", "gemini")).lower()
 
 
 def request_edit_plan(instruction: str, image_base64: Optional[str] = None, context: Optional[dict] = None) -> dict:

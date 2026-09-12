@@ -74,7 +74,7 @@ def _client():
 
 
 def _model():
-    return os.environ.get("SEGMENT_MODEL") or config.get("gemini_model", "gemini-2.5-flash")
+    return os.environ.get("SEGMENT_MODEL") or config.get("gemini_model", "gemini-3.8-flash")
 
 
 def _downscaled_jpeg(image_bytes, max_edge=None):

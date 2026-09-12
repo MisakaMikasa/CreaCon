@@ -1,17 +1,56 @@
+<img src="assets/icon-512.png" width="110" align="left" alt="">
+
 # CreaCon
 
-**Edit photos in Photoshop by describing what you want.**
+### Your AI copilot for photo editing.
 
-You type *"warmer and more cinematic, but keep it natural"*. CreaCon looks at your
-photo, plans the edit, shows you the steps, and — once you approve — performs them
-as **real Camera Raw develop settings and real adjustment layers**.
+**Lives inside Photoshop. Edits like a human photographer, not an image generator.**
 
-Nothing is generated. Nothing is flattened. Every edit it makes is one you could
-have made yourself, and you can adjust or undo any of it afterwards in the panels
-you already know.
+<br clear="left">
 
-<!-- TODO: drag an MP4 into GitHub's README editor and paste the
-     user-attachments URL here. ~30s: type a request, plan card, layers appear. -->
+Tell it what you want, in your own words:
+
+> *"make this photo look better"*
+> *"emphasize the skyscraper"*
+> *"imitate the vibe of Fuji Classic Negative"*
+> *"propose a better composition"*
+> *"recover the highlights and warm it up"*
+> *"darken just the sky"*
+
+CreaCon looks at your photo, works out what that means, and shows you a plan.
+You click Apply, and it performs the edit **as real Camera Raw develop settings
+and real adjustment layers** — the same moves you would have made by hand.
+
+**Nothing is generated. Nothing is flattened.** Every slider it touches is one
+you can find afterwards and change. Your photo stays yours; CreaCon just knows
+where the controls are.
+
+## See it work
+
+<!-- INLINE PLAYER: drag each MP4 into GitHub's README editor (or into any
+     issue) and paste the resulting user-attachments URL on its own line here.
+     GitHub renders those as a real player; it strips YouTube iframes. -->
+
+[![Demonstration 1](https://img.youtube.com/vi/CujDVSj0CaY/maxresdefault.jpg)](https://www.youtube.com/watch?v=CujDVSj0CaY)
+
+[![Demonstration 2](https://img.youtube.com/vi/UTCQHWtEFmQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=UTCQHWtEFmQ)
+
+## Why it is different
+
+Most AI photo tools **generate a new image**. You get a picture back and no way
+into it — you cannot nudge one thing, and you cannot tell what it changed.
+
+CreaCon **operates the software instead.** It writes develop settings and builds
+adjustment layers, so:
+
+- **Everything stays editable.** Every edit lands in Camera Raw or the Layers
+  panel where you can adjust or delete it.
+- **Nothing is destroyed.** Your original file is never overwritten.
+- **You approve before anything happens.** It proposes a plan; you decide.
+- **You can keep talking.** *"stronger"*, *"other side"*, *"make that gentler"* —
+  it knows what it just did.
+
+It is a copilot, not an autopilot. It does the fiddly part; you keep the taste.
 
 ---
 
@@ -19,9 +58,9 @@ you already know.
 
 **Develop a photo** — RAW or JPEG, through Camera Raw:
 
-> *"recover the highlights and warm it up"*
 > *"give me a faded film look"*
 > *"the sky is too pale — deepen the blues"*
+> *"push the greens toward teal, but keep skin natural"*
 
 Exposure, contrast, true Kelvin white balance, highlight and shadow recovery,
 texture, clarity, dehaze, the full HSL colour mixer, split-tone colour grading,
@@ -29,9 +68,9 @@ sharpening, noise reduction, grain and vignette.
 
 **Edit part of a photo** — it works out the masks itself:
 
-> *"darken just the sky"*
 > *"brighten her face a little"*
 > *"warm the left third of the frame"*
+> *"lift the shadows on the building, not the sky"*
 
 Sky, subject and person selection, plus linear and radial gradients — each
 carrying its own develop settings.
@@ -42,12 +81,8 @@ carrying its own develop settings.
 > *"fix the converging verticals"*
 > *"crop this tighter"*
 
-It measures what a straighten costs before doing it, and says so: *"straightening
-2 degrees, which trims about 10% of the frame."* On open-ended requests it offers
-crop options as thumbnails rather than deciding for you.
-
-**Work on ordinary layers** too — adjustment layers, masks, blend modes and groups
-on any PSD.
+On open-ended requests it offers crop options as thumbnails rather than deciding
+for you.
 
 **Then refine.** It knows what it just did, so *"stronger"*, *"other side"*,
 *"make that gentler"* all work as follow-ups.
@@ -96,9 +131,22 @@ has escalated it, so try switching it back on once 27.11 ships.
 
 ### 2. Install
 
-1. Run the CreaCon installer and launch the app.
-2. Open **⚙ Settings**, paste your Gemini API key, **Save**, then restart CreaCon.
-3. Open Photoshop. The CreaCon panel should show a green dot and *"Connected"*.
+CreaCon is two pieces: **the app**, which holds the chat, and **a Photoshop
+plugin**, which performs the edits. You need both.
+
+1. **Run the installer.** It lays down the app and registers the plugin with
+   Photoshop. Windows will ask for administrator rights, and Adobe will warn
+   that the plugin is not verified by them — that warning appears for every
+   plugin outside Adobe's own marketplace.
+2. **Open ⚙ Settings**, paste your Gemini API key, **Save**, then restart
+   CreaCon.
+3. **Open Photoshop.** The CreaCon panel should appear, and the app's status
+   strip should show a green dot and *"Connected"*.
+
+**If the panel does not appear/stays unconnected**, the plugin did not register. Install it by
+hand: double-click **`CreaCon.ccx`** in CreaCon's install folder (next to
+`CreaCon.exe`), and accept Adobe's prompt. This needs the Creative Cloud
+desktop app, which is what installs plugins on Windows.
 
 ---
 
@@ -187,11 +235,54 @@ file. That is also why the sidecar preference above is not optional.
 
 ---
 
+## Running from source
+
+You do not need the installer. The licence allows cloning, building and
+changing CreaCon for your own use &mdash; what it does not allow is
+redistributing it or building a commercial product from it.
+
+You still need **Photoshop 27.8+**, the two Camera Raw preferences above, and
+your own Gemini key.
+
+### The app
+
+```
+git clone https://github.com/MisakaMikasa/CreaCon.git
+cd CreaCon/backend
+
+python -m venv .venv
+.venv\Scripts\activate            # Windows; source .venv/bin/activate elsewhere
+pip install -r requirements.txt
+
+copy .env.example .env             # then put your Gemini key in it
+python app.py
+```
+
+`python app.py` opens the desktop window. `python main.py` runs the backend
+headless without a window, which is useful when you only want the API.
+
+Settings resolve in this order: `%APPDATA%\CreaCon\config.json` &rarr; environment
+&rarr; `backend/.env`. From source you will normally use the `.env`; an installed
+build has none and uses `config.json`, which its settings screen writes.
+
+### The plugin
+
+Load it through **UXP Developer Tools** (free, from Creative Cloud):
+*Add Plugin* &rarr; select `CreaCon/manifest.json` &rarr; *Load*.
+
+The plugin finds the app by itself &mdash; it tries ports 8000 and 8731&ndash;8735
+and connects to whichever answers, so nothing needs configuring. Watch the app's
+status light to confirm.
+
+---
+
 ## License
 
-Source-available, not open source. You may **use** CreaCon freely, for anything,
-including commercially. You may not modify or redistribute it. See
-[LICENSE](LICENSE).
+Source-available, not open source. Read it, run it, tinker with it — use
+CreaCon for anything, personal or commercial, and change it for yourself.
+
+What you may not do is build a commercial product from it or redistribute it,
+modified or not. Share the link, not the code. See [LICENSE](LICENSE).
 
 The source is here to be read and run — the comments explain *why* each mechanism
 is shaped the way it is, which is most of the value.
