@@ -6,3 +6,12 @@ backend/debug_overlays/
 *.pyc
 
 node_modules/
+
+# Build output. The .spec, .iss and make_notices.py are source and ARE tracked;
+# everything they produce is not - dist/ runs to 136MB, and GitHub rejects any
+# file over 100MB anyway. Release binaries go to GitHub Releases, not the repo.
+dist/
+build/work/
+build/THIRD-PARTY-NOTICES.txt
+build/*.ccx
+*.spec.bak
