@@ -131,9 +131,22 @@ has escalated it, so try switching it back on once 27.11 ships.
 
 ### 2. Install
 
-1. Run the CreaCon installer and launch the app.
-2. Open **⚙ Settings**, paste your Gemini API key, **Save**, then restart CreaCon.
-3. Open Photoshop. The CreaCon panel should show a green dot and *"Connected"*.
+CreaCon is two pieces: **the app**, which holds the chat, and **a Photoshop
+plugin**, which performs the edits. You need both.
+
+1. **Run the installer.** It lays down the app and registers the plugin with
+   Photoshop. Windows will ask for administrator rights, and Adobe will warn
+   that the plugin is not verified by them — that warning appears for every
+   plugin outside Adobe's own marketplace.
+2. **Open ⚙ Settings**, paste your Gemini API key, **Save**, then restart
+   CreaCon.
+3. **Open Photoshop.** The CreaCon panel should appear, and the app's status
+   strip should show a green dot and *"Connected"*.
+
+**If the panel does not appear/stays unconnected**, the plugin did not register. Install it by
+hand: double-click **`CreaCon.ccx`** in CreaCon's install folder (next to
+`CreaCon.exe`), and accept Adobe's prompt. This needs the Creative Cloud
+desktop app, which is what installs plugins on Windows.
 
 ---
 

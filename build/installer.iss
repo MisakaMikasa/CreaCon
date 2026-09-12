@@ -76,8 +76,9 @@ Filename: "{app}\{#AppExe}"; Description: "Start CreaCon"; \
 
 [UninstallRun]
 ; Best effort: if Creative Cloud has been removed first, UPIA is gone and there
-; is nothing to unregister. No runasoriginaluser here - it is a [Run]-only flag
-Filename: "{#UPIA}"; Parameters: "/remove ""CreaCon"""; \
+; is nothing to unregister. Removal is BY PLUGIN ID (the registered one
+; from Adobe's Developer Distribution portal), not by display name. No runasoriginaluser here - it is a [Run]-only flag
+Filename: "{#UPIA}"; Parameters: "/remove ""2a634137"""; \
   Flags: runhidden skipifdoesntexist; RunOnceId: "RemovePlugin"
 
 [Code]

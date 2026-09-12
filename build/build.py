@@ -90,7 +90,9 @@ def find_ccx():
     path, so looking only in build/ finds nothing even when the file exists.
     Newest wins, so repackaging just works.
     """
-    found = list(BUILD.glob("*.ccx")) + list((ROOT / "CreaCon").glob("*.ccx"))
+    # Three places, because UXP Developer Tools does not take a path and has
+    # been observed writing to both the plugin folder and the repo root.
+    found = [f for d in (BUILD, ROOT / "CreaCon", ROOT) for f in d.glob("*.ccx")]
     return max(found, key=lambda f: f.stat().st_mtime) if found else None
 
 

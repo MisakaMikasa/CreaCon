@@ -69,7 +69,22 @@
     <h2>Setup &amp; help</h2>
 
     <div class="help-block">
-      <h3>1. Camera Raw settings CreaCon needs</h3>
+      <h3>1. Add your own API key</h3>
+      <p>CreaCon uses <b>your</b> Google Gemini key, not a shared one. It is free
+         to get, it stays on this machine, and it is sent only to Google when you
+         ask for an edit.</p>
+      <ol>
+        <li>Get a key at <b>aistudio.google.com/apikey</b>.</li>
+        <li>Open <b>Settings</b> (the gear, top right), paste it in, and
+            <b>Save</b>.</li>
+        <li><b>Restart CreaCon</b> &mdash; the key is read when the app starts.</li>
+      </ol>
+      <p>Without a key every request fails. That is the first thing to check if
+         nothing happens when you send a message.</p>
+    </div>
+
+    <div class="help-block">
+      <h3>2. Camera Raw settings CreaCon needs</h3>
       <p>Open Camera Raw (double-click any raw photo), click the <b>gear icon</b>,
          then <b>File Handling</b>.</p>
       <dl>
@@ -81,17 +96,6 @@
         <dd>Only needed if you want to edit JPEGs. Without it Photoshop opens
             them directly and skips Camera Raw entirely.</dd>
       </dl>
-    </div>
-
-    <div class="help-block">
-      <h3>2. If colours look wrong on the canvas</h3>
-      <p>On <b>Photoshop 27.10</b> the canvas can render more saturated than the
-         Camera Raw dialog showing the same photo. <b>That is a Photoshop bug,
-         not CreaCon.</b> Camera Raw is the correct one, and files you save or
-         export are unaffected.</p>
-      <p>Fix: <b>Ctrl+K &rarr; Performance &rarr; untick "Use Graphics
-         Processor"</b>, then restart Photoshop. 27.9.1 is unaffected; try
-         turning it back on once 27.11 ships.</p>
     </div>
 
     <div class="help-block">
@@ -112,6 +116,29 @@
     </div>
 
     <div class="help-block">
+      <h3>If the Photoshop panel is missing, or the status light stays red</h3>
+      <p>CreaCon is two pieces: this app, and a Photoshop plugin that performs
+         the edits. The status light above says whether the plugin is connected.
+         If it is red while Photoshop is open, the plugin is not connected.</p>
+      <p>Install it by hand: double-click <b>CreaCon.ccx</b> in CreaCon's
+         install folder, beside CreaCon.exe, and accept Adobe's prompt. Adobe
+         warns that it is not verified by them &mdash; that appears for every
+         plugin outside their own marketplace. Installing plugins needs the
+         Creative Cloud desktop app.</p>
+    </div>
+
+    <div class="help-block">
+      <h3>If colours look wrong on the canvas</h3>
+      <p>On <b>Photoshop 27.10</b> the canvas can render more saturated than the
+         Camera Raw dialog showing the same photo. <b>That is a Photoshop bug,
+         not CreaCon.</b> Camera Raw is the correct one, and files you save or
+         export are unaffected.</p>
+      <p>Fix: <b>Ctrl+K &rarr; Performance &rarr; untick "Use Graphics
+         Processor"</b>, then restart Photoshop. 27.9.1 is unaffected; try
+         turning it back on once 27.11 ships.</p>
+    </div>
+
+    <div class="help-block">
       <h3>Things that surprise people</h3>
       <dl>
         <dt>An AI mask did nothing</dt>
@@ -127,7 +154,6 @@
             duplicated photo layers are locked together.</dd>
       </dl>
     </div>
-
     <div class="plan-actions">
       <button id="btnCloseHelp">Back to chat</button>
     </div>

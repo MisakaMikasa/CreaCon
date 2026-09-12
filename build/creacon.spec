@@ -88,9 +88,11 @@ exe = EXE(
     debug=False,
     strip=False,
     upx=False,
-    # console=True while this is still being shaped: a crash before the window
-    # opens is otherwise completely silent. Flip to False for release.
-    console=True,
+    # No console window. It was True while this was being shaped, because a
+    # crash before the window opens is otherwise silent - but it put a terminal
+    # beside the app that closing would kill it, which reads as broken.
+    # app.py logs to a file instead, so a crash still leaves a trace.
+    console=False,
     icon=os.path.join(ROOT, "assets", "creacon.ico"),
 )
 

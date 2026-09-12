@@ -32,7 +32,7 @@ import uvicorn
 import webview
 
 import main
-from paths import resource
+from paths import resource, userdata
 
 logger = logging.getLogger("creacon.app")
 
@@ -133,6 +133,31 @@ def run() -> None:
     webview.start(debug=debug, icon=str(ICON_PATH) if ICON_PATH.exists() else None)
 
 
+def _setup_logging() -> None:
+    """Log to a file as well as the console.
+
+    A shipped build has no console at all, so without this a crash before the
+    window opens leaves nothing behind and the app simply fails to appear. The
+    file is the only evidence a user could ever send.
+    """
+    handlers = [logging.StreamHandler()]
+    try:
+        handlers.append(logging.FileHandler(userdata("creacon.log"), encoding="utf-8"))
+    except Exception:
+        pass  # a missing log is not a reason to refuse to start
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=handlers,
+    )
+
+
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    run()
+    _setup_logging()
+    try:
+        run()
+    except Exception:
+        # Without a console this is the only place a startup failure is
+        # recorded. Logged before re-raising so the traceback reaches the file.
+        logging.getLogger("creacon.app").exception("CreaCon failed to start")
+        raise
