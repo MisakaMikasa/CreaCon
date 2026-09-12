@@ -22,6 +22,7 @@ server is simply the half that is free to move.
 
 import logging
 import os
+import sys
 import threading
 import time
 import urllib.error
@@ -64,7 +65,31 @@ def _wait_until_up(port: int, timeout: float = 20.0) -> bool:
     return False
 
 
+def _claim_taskbar_identity() -> None:
+    """Tell Windows this process is CreaCon, not whatever launched it.
+
+    Windows picks a taskbar button's icon from the process's AppUserModelID,
+    NOT from the window. python.exe is a shell-registered application with its
+    own identity, so in development the taskbar shows Python's icon however
+    correct the window's own icon is - which is exactly what it did.
+
+    It matters for the shipped build too: without an explicit ID, Windows
+    derives one from the executable path, and pinning to the taskbar then
+    behaves inconsistently. Must run before any window exists.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Qiao.CreaCon.App")
+    except Exception as exc:
+        # Cosmetic. Never worth failing a launch over.
+        logger.debug("could not set the AppUserModelID: %s", exc)
+
+
 def run() -> None:
+    _claim_taskbar_identity()
     port = main.choose_port()
 
     # daemon=True is what stops a zombie process. A normal thread keeps the
