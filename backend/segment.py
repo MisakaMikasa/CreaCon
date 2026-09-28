@@ -67,10 +67,17 @@ def _client():
     # reason.
     global _CLIENT
     if _CLIENT is None:
-        from google import genai
+        from llm_providers.gemini_provider import make_client
 
-        _CLIENT = genai.Client(api_key=config.get("gemini_api_key"))
+        _CLIENT = make_client()
     return _CLIENT
+
+
+def _via_openai_compat():
+    # Segmentation follows the chat provider when that is an OpenAI-compatible
+    # proxy - a user on OpenRouter has no Gemini key. Under 'anthropic' it stays
+    # on Gemini, as before: Claude has no native segmentation.
+    return str(config.get("llm_provider", "gemini")).lower() == "openai_compat"
 
 
 def _model():
@@ -149,13 +156,24 @@ def _decode_entry(entry, W, H, out):
 def _segment_once(image_bytes, query, mime="image/jpeg", want_png=False):
     """One segmentation call. Returns (mask_float HxW 0..1, meta with 'formats').
     want_png requests the accurate raster mask instead of a polygon."""
-    import numpy as np
-    from google.genai import types
     from PIL import Image
 
     W, H = Image.open(io.BytesIO(image_bytes)).size
     api_bytes = _downscaled_jpeg(image_bytes)  # small copy for the API; W,H stay original
     prompt = (_SEG_PROMPT_PNG if want_png else _SEG_PROMPT).format(query=query)
+    max_tokens = int(os.environ.get("SEGMENT_MAX_TOKENS", "65536"))
+
+    if _via_openai_compat():
+        from llm_providers.openai_compat_provider import segment_json
+
+        raw = segment_json(api_bytes, prompt, max_tokens).strip()
+    else:
+        raw = _segment_gemini(api_bytes, prompt, max_tokens)
+    return _decode_response(raw, query, W, H)
+
+
+def _segment_gemini(api_bytes, prompt, max_tokens):
+    from google.genai import types
 
     client = _client()  # keep a strong local ref for the whole call
     resp = client.models.generate_content(
@@ -174,10 +192,15 @@ def _segment_once(image_bytes, query, mime="image/jpeg", want_png=False):
             thinking_config=types.ThinkingConfig(thinking_budget=0),
             # The base64 PNG mask is large; the default output cap truncates it
             # mid-string. Give it room.
-            max_output_tokens=int(os.environ.get("SEGMENT_MAX_TOKENS", "65536")),
+            max_output_tokens=max_tokens,
         ),
     )
-    raw = (resp.text or "").strip()
+    return (resp.text or "").strip()
+
+
+def _decode_response(raw, query, W, H):
+    import numpy as np
+
     # Tolerate a ```json ... ``` fence despite response_mime_type=application/json.
     fenced = re.search(r"```(?:json)?\s*(.*?)```", raw, re.S)
     if fenced:

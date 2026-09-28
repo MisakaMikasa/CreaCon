@@ -22,7 +22,15 @@ MODEL = config.get("gemini_model", "gemini-3.8-flash")
 # A small positive budget keeps Gemini snappy for chat; 0 disables thinking.
 THINKING_BUDGET = int(os.environ.get("GEMINI_THINKING_BUDGET", "512"))
 
-_client = genai.Client(api_key=config.get("gemini_api_key"))
+def make_client() -> genai.Client:
+    """A client for Google, or for a proxy that speaks Gemini's own protocol
+    when gemini_base_url is set. segment.py builds its client here too."""
+    base_url = config.get("gemini_base_url")
+    http_options = types.HttpOptions(base_url=base_url) if base_url else None
+    return genai.Client(api_key=config.get("gemini_api_key"), http_options=http_options)
+
+
+_client = make_client()
 
 
 # Gemini's Developer API structured-output mode (response_schema) can't express

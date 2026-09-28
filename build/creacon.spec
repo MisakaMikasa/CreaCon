@@ -23,6 +23,7 @@ hiddenimports = [
     "scipy.ndimage",                    # mask_raster.py:45, :83
     "llm_providers.gemini_provider",    # llm_client.py, dispatched at call time
     "llm_providers.anthropic_provider",
+    "llm_providers.openai_compat_provider",
 ]
 hiddenimports += collect_submodules("uvicorn")
 hiddenimports += collect_submodules("webview")
