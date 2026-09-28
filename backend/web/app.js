@@ -630,6 +630,11 @@ async function showSettings(show) {
     // The placeholder is how the user knows one is already stored.
     el("apiKey").value = "";
     el("apiKey").placeholder = s.has_gemini_key ? "•••••••• (saved)" : "AIza…";
+    el("proxyKey").value = "";
+    el("proxyKey").placeholder = s.has_openai_compat_key ? "•••••••• (saved)" : "sk-or-…";
+    el("proxyUrl").value = s.openai_compat_base_url || "";
+    el("proxyModel").value = s.openai_compat_model || "";
+    syncProxyFields();
   } catch (err) {
     say(el("settingsMsg"), `Couldn't load settings: ${err.message}`, "bad");
   }
@@ -641,10 +646,20 @@ function say(node, text, kind) {
   node.className = kind || "";
 }
 
+function syncProxyFields() {
+  el("proxyFields").hidden = el("provider").value !== "openai_compat";
+}
+
 async function onSaveSettings() {
   const body = { llm_provider: el("provider").value };
   const key = el("apiKey").value.trim();
   if (key) body.gemini_api_key = key;
+  if (body.llm_provider === "openai_compat") {
+    const proxyKey = el("proxyKey").value.trim();
+    if (proxyKey) body.openai_compat_api_key = proxyKey;
+    body.openai_compat_base_url = el("proxyUrl").value.trim() || null;
+    body.openai_compat_model = el("proxyModel").value.trim() || null;
+  }
 
   try {
     const res = await fetch("/settings", {
@@ -655,6 +670,7 @@ async function onSaveSettings() {
     if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 200)}`);
     const done = await res.json();
     el("apiKey").value = "";
+    el("proxyKey").value = "";
     // The provider modules read their key and model at IMPORT time, so a change
     // does not reach a module that is already loaded. Saying so beats the user
     // concluding the setting did not save.
@@ -763,6 +779,7 @@ function setup() {
   el("btnSend").addEventListener("click", onSend);
   el("btnOpenRaw").addEventListener("click", onOpenRaw);
   el("btnSaveSettings").addEventListener("click", onSaveSettings);
+  el("provider").addEventListener("change", syncProxyFields);
   el("btnCacheCheck").addEventListener("click", onCacheCheck);
   el("btnCacheClean").addEventListener("click", onCacheClean);
 

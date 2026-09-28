@@ -40,7 +40,20 @@
       <select id="provider">
         <option value="gemini">Google Gemini</option>
         <option value="anthropic">Anthropic Claude</option>
+        <option value="openai_compat">OpenRouter / OpenAI-compatible proxy</option>
       </select>
+    </div>
+    <div id="proxyFields" hidden>
+      <label for="proxyKey">Proxy API key</label>
+      <input id="proxyKey" type="password" placeholder="sk-or-…" autocomplete="off" spellcheck="false">
+      <label for="proxyUrl">Base URL</label>
+      <input id="proxyUrl" type="text" placeholder="https://openrouter.ai/api/v1" spellcheck="false">
+      <label for="proxyModel">Model</label>
+      <input id="proxyModel" type="text" placeholder="google/gemini-3.8-flash" spellcheck="false">
+      <div class="hint">
+        Use a Gemini model: masking relies on Gemini's segmentation. The key is
+        sent only to the base URL above.
+      </div>
     </div>
     <div id="settingsMsg"></div>
     <div class="plan-actions">

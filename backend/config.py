@@ -44,6 +44,12 @@ _ENV_ALIASES = {
     "llm_provider": "LLM_PROVIDER",
     "gemini_model": "GEMINI_MODEL",
     "anthropic_model": "ANTHROPIC_MODEL",
+    # A proxy that speaks Gemini's own protocol (not OpenRouter - see below)
+    "gemini_base_url": "GEMINI_BASE_URL",
+    # OpenRouter or any other OpenAI-compatible endpoint
+    "openai_compat_api_key": "OPENAI_COMPAT_API_KEY",
+    "openai_compat_base_url": "OPENAI_COMPAT_BASE_URL",
+    "openai_compat_model": "OPENAI_COMPAT_MODEL",
     "port": "CREACON_PORT",
 }
 

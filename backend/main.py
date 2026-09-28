@@ -27,7 +27,7 @@ from validator import validate_edit_plan
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("creacon")
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 # Shown wherever a human reads it. The version string itself stays numeric:
 # Adobe's manifest expects major.minor.patch and a suffix risks rejection
 # at packaging time.
@@ -430,6 +430,10 @@ class SettingsRequest(BaseModel):
     gemini_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     llm_provider: Optional[str] = None
+    gemini_base_url: Optional[str] = None
+    openai_compat_api_key: Optional[str] = None
+    openai_compat_base_url: Optional[str] = None
+    openai_compat_model: Optional[str] = None
 
 
 @app.get("/settings", dependencies=[Depends(require_token)])
@@ -441,6 +445,10 @@ def read_settings():
         "llm_provider": config.get("llm_provider", "gemini"),
         "has_gemini_key": bool(config.get("gemini_api_key")),
         "has_anthropic_key": bool(config.get("anthropic_api_key")),
+        "has_openai_compat_key": bool(config.get("openai_compat_api_key")),
+        # Not secrets, so these are handed back for the form to show.
+        "openai_compat_base_url": config.get("openai_compat_base_url", "https://openrouter.ai/api/v1"),
+        "openai_compat_model": config.get("openai_compat_model", "google/gemini-3.8-flash"),
     }
 
 

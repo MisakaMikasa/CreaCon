@@ -14,7 +14,7 @@ PROVIDER = str(config.get("llm_provider", "gemini")).lower()
 
 
 def request_edit_plan(instruction: str, image_base64: Optional[str] = None, context: Optional[dict] = None) -> dict:
-    """Dispatches to the configured provider. Set LLM_PROVIDER=gemini|anthropic in .env.
+    """Dispatches to the configured provider. Set LLM_PROVIDER=gemini|anthropic|openai_compat in .env.
 
     `context` carries document info for the prompt (layer_names, selected_layers).
     Lazily imports the provider module so you only need that provider's SDK
@@ -24,8 +24,10 @@ def request_edit_plan(instruction: str, image_base64: Optional[str] = None, cont
         from llm_providers.gemini_provider import request_edit_plan as impl
     elif PROVIDER == "anthropic":
         from llm_providers.anthropic_provider import request_edit_plan as impl
+    elif PROVIDER == "openai_compat":
+        from llm_providers.openai_compat_provider import request_edit_plan as impl
     else:
-        raise ValueError(f"Unknown LLM_PROVIDER '{PROVIDER}' - use 'anthropic' or 'gemini'")
+        raise ValueError(f"Unknown LLM_PROVIDER '{PROVIDER}' - use 'gemini', 'anthropic' or 'openai_compat'")
 
     return impl(instruction, image_base64, context)
 
@@ -37,7 +39,9 @@ def chat(messages: list, image_base64: Optional[str] = None, context: Optional[d
         from llm_providers.gemini_provider import chat as impl
     elif PROVIDER == "anthropic":
         from llm_providers.anthropic_provider import chat as impl
+    elif PROVIDER == "openai_compat":
+        from llm_providers.openai_compat_provider import chat as impl
     else:
-        raise ValueError(f"Unknown LLM_PROVIDER '{PROVIDER}' - use 'anthropic' or 'gemini'")
+        raise ValueError(f"Unknown LLM_PROVIDER '{PROVIDER}' - use 'gemini', 'anthropic' or 'openai_compat'")
 
     return impl(messages, image_base64, context)
