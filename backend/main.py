@@ -27,7 +27,7 @@ from validator import validate_edit_plan
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("creacon")
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 # Shown wherever a human reads it. The version string itself stays numeric:
 # Adobe's manifest expects major.minor.patch and a suffix risks rejection
 # at packaging time.
